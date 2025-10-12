@@ -24,6 +24,12 @@ export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
 echo "Subscription: $AZURE_SUBSCRIPTION_ID"
 echo "Principal ID: $AZURE_PRINCIPAL_ID"
 
+# Force App Service deployment (not Container Apps)
+export DEPLOYMENT_TARGET="appservice"
+export AZURE_CONTAINER_APPS_WORKLOAD_PROFILE="Consumption"
+
+echo "Deployment Target: $DEPLOYMENT_TARGET"
+
 # Create resource group
 echo "📦 Creating resource group..."
 az group create \
@@ -54,7 +60,9 @@ cat > deployment-parameters.json << EOF
     "speechServiceSkuName": {"value": "S0"},
     "cosmosDbSkuName": {"value": "free"},
     "defaultReasoningEffort": {"value": "medium"},
-    "useAgenticRetrieval": {"value": false}
+    "useAgenticRetrieval": {"value": false},
+    "deploymentTarget": {"value": "appservice"},
+    "azureContainerAppsWorkloadProfile": {"value": "Consumption"}
   }
 }
 EOF
