@@ -53,7 +53,7 @@ If you prefer to run each step separately:
 ### What Gets Created
 - **Resource Group**: `rg-calgarypermitbot`
 - **Location**: West US 2
-- **App Service Plan**: B1 tier (Basic)
+- **App Service Plan**: F1 tier (Free)
 - **Web Apps**: 
   - Backend: `calgarypermitbot-backend-[suffix]`
   - Frontend: `calgarypermitbot-frontend-[suffix]`
@@ -121,7 +121,7 @@ az appservice plan create \
   --name "asp-calgarypermitbot" \
   --resource-group $RESOURCE_GROUP \
   --location $LOCATION \
-  --sku B1 \
+  --sku F1 \
   --is-linux
 
 # Create web apps

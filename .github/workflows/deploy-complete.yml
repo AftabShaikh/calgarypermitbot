@@ -64,7 +64,7 @@ jobs:
           --name ${{ env.APP_SERVICE_PLAN }} \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --location ${{ env.LOCATION }} \
-          --sku B1 \
+          --sku F1 \
           --is-linux
         
         # Create Backend Web App

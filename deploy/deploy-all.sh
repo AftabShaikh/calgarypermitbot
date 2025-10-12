@@ -16,7 +16,7 @@ echo "4. Configure all services"
 echo ""
 echo "Target Configuration:"
 echo "- Location: West US 2"
-echo "- App Service Plan: B1 (Basic)"
+echo "- App Service Plan: F1 (Free)"
 echo "- Two Web Apps: Frontend + Backend"
 echo ""
 
