@@ -36,36 +36,24 @@ az group create \
   --name $AZURE_RESOURCE_GROUP \
   --location $AZURE_LOCATION
 
-# Create deployment parameters
+# Create deployment parameters - using the original template approach
 echo "⚙️  Creating deployment parameters..."
-cat > deployment-parameters.json << EOF
-{
-  "\$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "environmentName": {"value": "$AZURE_ENV_NAME"},
-    "location": {"value": "$AZURE_LOCATION"},
-    "principalId": {"value": "$AZURE_PRINCIPAL_ID"},
-    "openAiLocation": {"value": "eastus"},
-    "openAiHost": {"value": "azure"},
-    "searchServiceSkuName": {"value": "basic"},
-    "searchIndexName": {"value": "gptkbindex"},
-    "searchQueryLanguage": {"value": "en-us"},
-    "searchQuerySpeller": {"value": "lexicon"},
-    "searchServiceSemanticRankerLevel": {"value": "free"},
-    "searchFieldNameEmbedding": {"value": "embedding"},
-    "searchServiceQueryRewriting": {"value": "disabled"},
-    "storageSkuName": {"value": "Standard_LRS"},
-    "appServiceSkuName": {"value": "B1"},
-    "speechServiceSkuName": {"value": "S0"},
-    "cosmosDbSkuName": {"value": "free"},
-    "defaultReasoningEffort": {"value": "medium"},
-    "useAgenticRetrieval": {"value": false},
-    "deploymentTarget": {"value": "appservice"},
-    "azureContainerAppsWorkloadProfile": {"value": "Consumption"}
-  }
-}
-EOF
+
+# Use the existing parameters template but substitute our values
+cp infra/main.parameters.json deployment-parameters.json
+
+# Replace template variables with actual values using sed
+sed -i "s/\${AZURE_ENV_NAME}/$AZURE_ENV_NAME/g" deployment-parameters.json
+sed -i "s/\${AZURE_RESOURCE_GROUP}/$AZURE_RESOURCE_GROUP/g" deployment-parameters.json
+sed -i "s/\${AZURE_LOCATION}/$AZURE_LOCATION/g" deployment-parameters.json
+sed -i "s/\${AZURE_PRINCIPAL_ID}/$AZURE_PRINCIPAL_ID/g" deployment-parameters.json
+sed -i "s/\${DEPLOYMENT_TARGET=appservice}/appservice/g" deployment-parameters.json
+sed -i "s/\${AZURE_CONTAINER_APPS_WORKLOAD_PROFILE=Consumption}/Consumption/g" deployment-parameters.json
+sed -i "s/\${OPENAI_HOST=azure}/azure/g" deployment-parameters.json
+sed -i "s/\${AZURE_SEARCH_SERVICE_SKU=basic}/basic/g" deployment-parameters.json
+sed -i "s/\${AZURE_SEARCH_INDEX=gptkbindex}/gptkbindex/g" deployment-parameters.json
+
+echo "Parameters file created and configured for App Service deployment"
 
 # Deploy infrastructure
 echo "🏗️  Deploying Azure infrastructure..."
