@@ -29,13 +29,13 @@ az group create \
     --name $RESOURCE_GROUP \
     --location $LOCATION
 
-# Step 2: Create App Service Plan (F1 tier - Free)
+# Step 2: Create App Service Plan (S1 tier - Standard)
 echo "🖥️  Creating App Service Plan..."
 az appservice plan create \
     --name $APP_SERVICE_PLAN \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
-    --sku F1 \
+    --sku S1 \
     --is-linux
 
 # Step 3: Create Backend Web App
