@@ -460,3 +460,6 @@ yarl==1.17.2
     # via aiohttp
 zipp==3.21.0
     # via importlib-metadata
+
+# Added for Azure App Service deployment
+gunicorn>=21.2.0
