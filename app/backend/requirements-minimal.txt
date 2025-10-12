@@ -1,4 +1,4 @@
-# Minimal requirements for Azure App Service deployment
+git # Minimal requirements for Azure App Service deployment
 quart>=0.19.4
 gunicorn>=21.2.0
 uvicorn[standard]>=0.24.0

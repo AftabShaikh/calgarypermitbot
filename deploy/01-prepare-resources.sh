@@ -1,0 +1,232 @@
+#!/bin/bash
+
+# Calgary Permit Bot - Resource Preparation Script
+# This script creates all necessary Azure resources for the Calgary Permit Bot application
+
+set -e  # Exit on any error
+
+# Configuration
+RESOURCE_GROUP="rg-calgarypermitbot"
+LOCATION="westus2"
+APP_SERVICE_PLAN="asp-calgarypermitbot"
+BACKEND_APP_NAME="calgarypermitbot-backend"
+FRONTEND_APP_NAME="calgarypermitbot-frontend"
+STORAGE_ACCOUNT="calgarypermitbotstg$(date +%s | tail -c 6)"  # Random suffix to ensure uniqueness
+SEARCH_SERVICE="calgarypermitbot-search"
+OPENAI_SERVICE="calgarypermitbot-openai"
+COSMOS_ACCOUNT="calgarypermitbot-cosmos"
+
+echo "🚀 Starting Calgary Permit Bot Resource Preparation"
+echo "=================================================="
+echo "Resource Group: $RESOURCE_GROUP"
+echo "Location: $LOCATION"
+echo "Storage Account: $STORAGE_ACCOUNT"
+echo ""
+
+# Step 1: Create Resource Group
+echo "📦 Creating resource group..."
+az group create \
+    --name $RESOURCE_GROUP \
+    --location $LOCATION
+
+# Step 2: Create App Service Plan (B1 tier)
+echo "🖥️  Creating App Service Plan..."
+az appservice plan create \
+    --name $APP_SERVICE_PLAN \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION \
+    --sku B1 \
+    --is-linux
+
+# Step 3: Create Backend Web App
+echo "🔧 Creating Backend Web App..."
+az webapp create \
+    --name $BACKEND_APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --plan $APP_SERVICE_PLAN \
+    --runtime "PYTHON|3.11" \
+    --startup-file "python run_app.py"
+
+# Enable managed identity for backend
+echo "🔐 Enabling managed identity for backend..."
+az webapp identity assign \
+    --name $BACKEND_APP_NAME \
+    --resource-group $RESOURCE_GROUP
+
+# Step 4: Create Frontend Web App
+echo "🎨 Creating Frontend Web App..."
+az webapp create \
+    --name $FRONTEND_APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --plan $APP_SERVICE_PLAN \
+    --runtime "NODE|20-lts"
+
+# Step 5: Create Storage Account
+echo "💾 Creating Storage Account..."
+az storage account create \
+    --name $STORAGE_ACCOUNT \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION \
+    --sku Standard_LRS \
+    --kind StorageV2 \
+    --allow-blob-public-access false
+
+# Create content container
+echo "📁 Creating storage container..."
+az storage container create \
+    --name content \
+    --account-name $STORAGE_ACCOUNT \
+    --auth-mode login
+
+# Step 6: Create Azure AI Search Service
+echo "🔍 Creating Azure AI Search Service..."
+az search service create \
+    --name $SEARCH_SERVICE \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION \
+    --sku basic
+
+# Step 7: Register AI Services provider (if not already registered)
+echo "🤖 Registering AI Services provider..."
+az provider register --namespace Microsoft.CognitiveServices || true
+
+# Step 8: Create Azure OpenAI Service
+echo "🧠 Creating Azure OpenAI Service..."
+az cognitiveservices account create \
+    --name $OPENAI_SERVICE \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION \
+    --kind OpenAI \
+    --sku S0
+
+# Step 9: Deploy OpenAI Models
+echo "📚 Deploying OpenAI models..."
+# Deploy GPT-4o-mini model
+az cognitiveservices account deployment create \
+    --name $OPENAI_SERVICE \
+    --resource-group $RESOURCE_GROUP \
+    --deployment-name gpt-4o-mini \
+    --model-name gpt-4o-mini \
+    --model-version "2024-07-18" \
+    --model-format OpenAI \
+    --capacity 10
+
+# Deploy text-embedding-3-large model
+az cognitiveservices account deployment create \
+    --name $OPENAI_SERVICE \
+    --resource-group $RESOURCE_GROUP \
+    --deployment-name text-embedding-3-large \
+    --model-name text-embedding-3-large \
+    --model-version "1" \
+    --model-format OpenAI \
+    --capacity 10
+
+# Step 10: Register Cosmos DB provider (if not already registered)
+echo "🌐 Registering Cosmos DB provider..."
+az provider register --namespace Microsoft.DocumentDB || true
+
+# Step 11: Create Cosmos DB Account
+echo "🗄️  Creating Cosmos DB account..."
+az cosmosdb create \
+    --name $COSMOS_ACCOUNT \
+    --resource-group $RESOURCE_GROUP \
+    --kind GlobalDocumentDB \
+    --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=False \
+    --default-consistency-level Session \
+    --enable-automatic-failover false \
+    --enable-multiple-write-locations false \
+    --capabilities EnableServerless
+
+# Create Cosmos DB database and container
+echo "📊 Creating Cosmos DB database and container..."
+az cosmosdb sql database create \
+    --account-name $COSMOS_ACCOUNT \
+    --resource-group $RESOURCE_GROUP \
+    --name chathistory
+
+az cosmosdb sql container create \
+    --account-name $COSMOS_ACCOUNT \
+    --resource-group $RESOURCE_GROUP \
+    --database-name chathistory \
+    --name chatcontainer \
+    --partition-key-path "/entra_oid"
+
+# Step 12: Set up Role Assignments
+echo "🔑 Setting up role assignments..."
+
+# Get backend app principal ID
+BACKEND_PRINCIPAL_ID=$(az webapp identity show --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --query principalId -o tsv)
+
+# Get resource IDs
+STORAGE_ID=$(az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query id -o tsv)
+SEARCH_ID=$(az search service show --name $SEARCH_SERVICE --resource-group $RESOURCE_GROUP --query id -o tsv)
+OPENAI_ID=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query id -o tsv)
+COSMOS_ID=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query id -o tsv)
+
+# Assign roles
+az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Storage Blob Data Contributor" --scope $STORAGE_ID
+az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Search Index Data Contributor" --scope $SEARCH_ID
+az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Search Service Contributor" --scope $SEARCH_ID
+az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Cognitive Services OpenAI User" --scope $OPENAI_ID
+az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Cosmos DB Account Reader Role" --scope $COSMOS_ID
+
+# Step 13: Configure Backend App Settings
+echo "⚙️  Configuring backend app settings..."
+
+# Get connection information
+STORAGE_CONNECTION=$(az storage account show-connection-string --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query connectionString -o tsv)
+SEARCH_ENDPOINT=$(az search service show --name $SEARCH_SERVICE --resource-group $RESOURCE_GROUP --query hostName -o tsv)
+OPENAI_ENDPOINT=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query properties.endpoint -o tsv)
+
+# Configure app settings
+az webapp config appsettings set \
+    --name $BACKEND_APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --settings \
+        AZURE_STORAGE_ACCOUNT=$STORAGE_ACCOUNT \
+        AZURE_STORAGE_CONTAINER=content \
+        AZURE_SEARCH_SERVICE=$SEARCH_SERVICE \
+        AZURE_SEARCH_INDEX=gptkbindex \
+        AZURE_OPENAI_SERVICE=$OPENAI_SERVICE \
+        AZURE_OPENAI_CHATGPT_DEPLOYMENT=gpt-4o-mini \
+        AZURE_OPENAI_EMB_DEPLOYMENT=text-embedding-3-large \
+        AZURE_COSMOSDB_ACCOUNT=$COSMOS_ACCOUNT \
+        AZURE_CHAT_HISTORY_DATABASE=chathistory \
+        AZURE_CHAT_HISTORY_CONTAINER=chatcontainer \
+        AZURE_CHAT_HISTORY_VERSION=1 \
+        USE_CHAT_HISTORY_COSMOS=true \
+        OPENAI_HOST=azure \
+        SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+        WEBSITE_RUN_FROM_PACKAGE=1
+
+# Step 14: Save configuration to file
+echo "💾 Saving configuration..."
+cat > /tmp/deployment-config.env << EOF
+RESOURCE_GROUP=$RESOURCE_GROUP
+LOCATION=$LOCATION
+APP_SERVICE_PLAN=$APP_SERVICE_PLAN
+BACKEND_APP_NAME=$BACKEND_APP_NAME
+FRONTEND_APP_NAME=$FRONTEND_APP_NAME
+STORAGE_ACCOUNT=$STORAGE_ACCOUNT
+SEARCH_SERVICE=$SEARCH_SERVICE
+OPENAI_SERVICE=$OPENAI_SERVICE
+COSMOS_ACCOUNT=$COSMOS_ACCOUNT
+BACKEND_PRINCIPAL_ID=$BACKEND_PRINCIPAL_ID
+STORAGE_CONNECTION=$STORAGE_CONNECTION
+SEARCH_ENDPOINT=$SEARCH_ENDPOINT
+OPENAI_ENDPOINT=$OPENAI_ENDPOINT
+EOF
+
+echo ""
+echo "✅ Resource preparation completed successfully!"
+echo "=================================================="
+echo "✅ Resource Group: $RESOURCE_GROUP"
+echo "✅ Backend App: https://$BACKEND_APP_NAME.azurewebsites.net"
+echo "✅ Frontend App: https://$FRONTEND_APP_NAME.azurewebsites.net"
+echo "✅ Storage Account: $STORAGE_ACCOUNT"
+echo "✅ Search Service: $SEARCH_SERVICE"
+echo "✅ OpenAI Service: $OPENAI_SERVICE"
+echo "✅ Cosmos DB: $COSMOS_ACCOUNT"
+echo ""
+echo "📋 Configuration saved to: /tmp/deployment-config.env"
+echo "🚀 Ready for deployment! Run ./02-deploy-app.sh next."

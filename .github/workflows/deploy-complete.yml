@@ -1,0 +1,350 @@
+# Calgary Permit Bot - Complete Deployment Workflow
+# This workflow handles resource creation and application deployment
+
+name: Deploy Calgary Permit Bot (Complete)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_resources:
+        description: 'Create Azure resources (first time deployment)'
+        required: true
+        default: 'true'
+        type: boolean
+      resource_suffix:
+        description: 'Resource suffix (leave empty for auto-generated)'
+        required: false
+        type: string
+
+env:
+  RESOURCE_GROUP: rg-calgarypermitbot
+  LOCATION: westus2
+  APP_SERVICE_PLAN: asp-calgarypermitbot
+
+jobs:
+  prepare-resources:
+    runs-on: ubuntu-latest
+    if: ${{ inputs.deploy_resources == true }}
+    outputs:
+      backend-app-name: ${{ steps.setup.outputs.backend-app-name }}
+      frontend-app-name: ${{ steps.setup.outputs.frontend-app-name }}
+      storage-account: ${{ steps.setup.outputs.storage-account }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup resource names
+      id: setup
+      run: |
+        if [ -n "${{ inputs.resource_suffix }}" ]; then
+          SUFFIX="${{ inputs.resource_suffix }}"
+        else
+          SUFFIX=$(date +%s | tail -c 6)
+        fi
+        
+        echo "backend-app-name=calgarypermitbot-backend-${SUFFIX}" >> $GITHUB_OUTPUT
+        echo "frontend-app-name=calgarypermitbot-frontend-${SUFFIX}" >> $GITHUB_OUTPUT
+        echo "storage-account=cpbstg${SUFFIX}" >> $GITHUB_OUTPUT
+        echo "search-service=calgarypermitbot-search-${SUFFIX}" >> $GITHUB_OUTPUT
+        echo "openai-service=calgarypermitbot-openai-${SUFFIX}" >> $GITHUB_OUTPUT
+        echo "cosmos-account=calgarypermitbot-cosmos-${SUFFIX}" >> $GITHUB_OUTPUT
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Create Azure Resources
+      run: |
+        # Create Resource Group
+        az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }}
+        
+        # Create App Service Plan
+        az appservice plan create \
+          --name ${{ env.APP_SERVICE_PLAN }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --location ${{ env.LOCATION }} \
+          --sku B1 \
+          --is-linux
+        
+        # Create Backend Web App
+        az webapp create \
+          --name ${{ steps.setup.outputs.backend-app-name }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --plan ${{ env.APP_SERVICE_PLAN }} \
+          --runtime "PYTHON|3.11" \
+          --startup-file "python run_app.py"
+        
+        # Create Frontend Web App
+        az webapp create \
+          --name ${{ steps.setup.outputs.frontend-app-name }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --plan ${{ env.APP_SERVICE_PLAN }} \
+          --runtime "NODE|20-lts"
+        
+        # Enable managed identity
+        az webapp identity assign \
+          --name ${{ steps.setup.outputs.backend-app-name }} \
+          --resource-group ${{ env.RESOURCE_GROUP }}
+        
+        # Create Storage Account
+        az storage account create \
+          --name ${{ steps.setup.outputs.storage-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --location ${{ env.LOCATION }} \
+          --sku Standard_LRS \
+          --kind StorageV2 \
+          --allow-blob-public-access false
+        
+        # Create storage container
+        az storage container create \
+          --name content \
+          --account-name ${{ steps.setup.outputs.storage-account }} \
+          --auth-mode login
+        
+        # Create AI Search Service
+        az search service create \
+          --name ${{ steps.setup.outputs.search-service }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --location ${{ env.LOCATION }} \
+          --sku basic
+        
+        # Register providers
+        az provider register --namespace Microsoft.CognitiveServices
+        az provider register --namespace Microsoft.DocumentDB
+        
+        # Create OpenAI Service
+        az cognitiveservices account create \
+          --name ${{ steps.setup.outputs.openai-service }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --location ${{ env.LOCATION }} \
+          --kind OpenAI \
+          --sku S0
+        
+        # Create Cosmos DB
+        az cosmosdb create \
+          --name ${{ steps.setup.outputs.cosmos-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --kind GlobalDocumentDB \
+          --locations regionName="${{ env.LOCATION }}" failoverPriority=0 \
+          --default-consistency-level Session \
+          --capabilities EnableServerless
+
+    - name: Deploy OpenAI Models
+      run: |
+        # Deploy models
+        az cognitiveservices account deployment create \
+          --name ${{ steps.setup.outputs.openai-service }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --deployment-name gpt-4o-mini \
+          --model-name gpt-4o-mini \
+          --model-version "2024-07-18" \
+          --model-format OpenAI \
+          --capacity 10
+        
+        az cognitiveservices account deployment create \
+          --name ${{ steps.setup.outputs.openai-service }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --deployment-name text-embedding-3-large \
+          --model-name text-embedding-3-large \
+          --model-version "1" \
+          --model-format OpenAI \
+          --capacity 10
+
+    - name: Create Cosmos DB Database and Container
+      run: |
+        az cosmosdb sql database create \
+          --account-name ${{ steps.setup.outputs.cosmos-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name chathistory
+        
+        az cosmosdb sql container create \
+          --account-name ${{ steps.setup.outputs.cosmos-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --database-name chathistory \
+          --name chatcontainer \
+          --partition-key-path "/entra_oid"
+
+    - name: Configure Permissions and Settings
+      run: |
+        # Get principal ID
+        PRINCIPAL_ID=$(az webapp identity show \
+          --name ${{ steps.setup.outputs.backend-app-name }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query principalId -o tsv)
+        
+        # Get resource IDs
+        STORAGE_ID=$(az storage account show \
+          --name ${{ steps.setup.outputs.storage-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query id -o tsv)
+        
+        SEARCH_ID=$(az search service show \
+          --name ${{ steps.setup.outputs.search-service }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query id -o tsv)
+        
+        OPENAI_ID=$(az cognitiveservices account show \
+          --name ${{ steps.setup.outputs.openai-service }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query id -o tsv)
+        
+        COSMOS_ID=$(az cosmosdb show \
+          --name ${{ steps.setup.outputs.cosmos-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query id -o tsv)
+        
+        # Assign roles
+        az role assignment create --assignee $PRINCIPAL_ID --role "Storage Blob Data Contributor" --scope $STORAGE_ID
+        az role assignment create --assignee $PRINCIPAL_ID --role "Search Index Data Contributor" --scope $SEARCH_ID
+        az role assignment create --assignee $PRINCIPAL_ID --role "Search Service Contributor" --scope $SEARCH_ID
+        az role assignment create --assignee $PRINCIPAL_ID --role "Cognitive Services OpenAI User" --scope $OPENAI_ID
+        az role assignment create --assignee $PRINCIPAL_ID --role "Cosmos DB Account Reader Role" --scope $COSMOS_ID
+        
+        # Configure app settings
+        az webapp config appsettings set \
+          --name ${{ steps.setup.outputs.backend-app-name }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --settings \
+            AZURE_STORAGE_ACCOUNT=${{ steps.setup.outputs.storage-account }} \
+            AZURE_STORAGE_CONTAINER=content \
+            AZURE_SEARCH_SERVICE=${{ steps.setup.outputs.search-service }} \
+            AZURE_SEARCH_INDEX=gptkbindex \
+            AZURE_OPENAI_SERVICE=${{ steps.setup.outputs.openai-service }} \
+            AZURE_OPENAI_CHATGPT_DEPLOYMENT=gpt-4o-mini \
+            AZURE_OPENAI_EMB_DEPLOYMENT=text-embedding-3-large \
+            AZURE_COSMOSDB_ACCOUNT=${{ steps.setup.outputs.cosmos-account }} \
+            AZURE_CHAT_HISTORY_DATABASE=chathistory \
+            AZURE_CHAT_HISTORY_CONTAINER=chatcontainer \
+            AZURE_CHAT_HISTORY_VERSION=1 \
+            USE_CHAT_HISTORY_COSMOS=true \
+            OPENAI_HOST=azure \
+            SCM_DO_BUILD_DURING_DEPLOYMENT=true
+
+  deploy-applications:
+    runs-on: ubuntu-latest
+    needs: prepare-resources
+    if: always() && (needs.prepare-resources.result == 'success' || inputs.deploy_resources == false)
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: app/frontend/package-lock.json
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Get or Set Resource Names
+      id: resources
+      run: |
+        if [ "${{ inputs.deploy_resources }}" == "true" ]; then
+          echo "backend-app-name=${{ needs.prepare-resources.outputs.backend-app-name }}" >> $GITHUB_OUTPUT
+          echo "frontend-app-name=${{ needs.prepare-resources.outputs.frontend-app-name }}" >> $GITHUB_OUTPUT
+          echo "storage-account=${{ needs.prepare-resources.outputs.storage-account }}" >> $GITHUB_OUTPUT
+        else
+          # Use existing resource names - modify these for your existing resources
+          echo "backend-app-name=calgarypermitbot-backend" >> $GITHUB_OUTPUT
+          echo "frontend-app-name=calgarypermitbot-frontend" >> $GITHUB_OUTPUT
+          echo "storage-account=calgarypermitbotstg" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Build Frontend
+      run: |
+        cd app/frontend
+        npm ci
+        npm run build
+    
+    - name: Upload Data Files
+      run: |
+        # Temporarily allow all networks
+        az storage account update \
+          --name ${{ steps.resources.outputs.storage-account }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --default-action Allow
+        
+        sleep 10
+        
+        # Upload data files
+        az storage blob upload-batch \
+          --account-name ${{ steps.resources.outputs.storage-account }} \
+          --destination content \
+          --source data \
+          --auth-mode login \
+          --overwrite
+    
+    - name: Deploy Backend
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ steps.resources.outputs.backend-app-name }}
+        package: './app/backend'
+        startup-command: 'python run_app.py'
+    
+    - name: Prepare Frontend Deployment
+      run: |
+        mkdir -p frontend-deploy
+        cp -r app/backend/static/* frontend-deploy/
+        
+        # Create Express server for frontend
+        cat > frontend-deploy/server.js << 'EOF'
+        const express = require('express');
+        const path = require('path');
+        const app = express();
+        const port = process.env.PORT || 8080;
+        
+        app.use(express.static(path.join(__dirname)));
+        
+        app.get('*', (req, res) => {
+          res.sendFile(path.join(__dirname, 'index.html'));
+        });
+        
+        app.listen(port, () => {
+          console.log(`Frontend server running on port ${port}`);
+        });
+        EOF
+        
+        # Create package.json
+        cat > frontend-deploy/package.json << 'EOF'
+        {
+          "name": "calgarypermitbot-frontend",
+          "version": "1.0.0",
+          "main": "server.js",
+          "scripts": {
+            "start": "node server.js"
+          },
+          "dependencies": {
+            "express": "^4.18.2"
+          }
+        }
+        EOF
+    
+    - name: Deploy Frontend
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ steps.resources.outputs.frontend-app-name }}
+        package: './frontend-deploy'
+    
+    - name: Display Deployment Info
+      run: |
+        echo "🎉 Deployment completed successfully!"
+        echo "======================================"
+        echo ""
+        echo "🌐 Application URLs:"
+        echo "   Frontend: https://${{ steps.resources.outputs.frontend-app-name }}.azurewebsites.net"
+        echo "   Backend:  https://${{ steps.resources.outputs.backend-app-name }}.azurewebsites.net"
+        echo ""
+        echo "📝 Next Steps:"
+        echo "   1. Wait 2-3 minutes for services to start"
+        echo "   2. Visit the frontend URL to test the application"
+        echo "   3. Check logs if needed in Azure Portal"
