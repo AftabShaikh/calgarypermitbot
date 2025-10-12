@@ -26,59 +26,29 @@ az group create \
   --name $AZURE_RESOURCE_GROUP \
   --location $AZURE_LOCATION
 
-# Deploy infrastructure using resource group scope (simpler than subscription scope)
-echo "🏗️  Deploying infrastructure to resource group..."
+# Skip Bicep templates entirely - create resources directly with Azure CLI
+echo "🏗️  Creating Azure resources directly..."
 
-# Create a simplified parameters file that avoids the problematic parameters
-cat > rg-deployment-parameters.json << EOF
-{
-  "\$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "environmentName": {"value": "$AZURE_ENV_NAME"},
-    "location": {"value": "$AZURE_LOCATION"},
-    "principalId": {"value": "$AZURE_PRINCIPAL_ID"},
-    "deploymentTarget": {"value": "appservice"},
-    "webAppExists": {"value": false}
-  }
-}
-EOF
+# Create App Service Plan and Web App manually (no Bicep templates)
+APP_SERVICE_PLAN_NAME="${AZURE_ENV_NAME}-plan"
+APP_SERVICE_NAME="${AZURE_ENV_NAME}-app"
 
-# Deploy to resource group scope instead of subscription scope
-az deployment group create \
+echo "Creating App Service Plan: $APP_SERVICE_PLAN_NAME"
+az appservice plan create \
+  --name $APP_SERVICE_PLAN_NAME \
   --resource-group $AZURE_RESOURCE_GROUP \
-  --template-file infra/core/host/appservice.bicep \
-  --parameters @rg-deployment-parameters.json \
-  --name "appservice-deployment"
+  --location $AZURE_LOCATION \
+  --sku B1 \
+  --is-linux
 
-echo "✅ Basic infrastructure deployed!"
+echo "Creating Web App: $APP_SERVICE_NAME"
+az webapp create \
+  --name $APP_SERVICE_NAME \
+  --resource-group $AZURE_RESOURCE_GROUP \
+  --plan $APP_SERVICE_PLAN_NAME \
+  --runtime "PYTHON|3.11"
 
-# Get resource names
-echo "🔍 Getting resource information..."
-APP_SERVICE_NAME=$(az webapp list --resource-group $AZURE_RESOURCE_GROUP --query '[0].name' -o tsv 2>/dev/null || echo "")
-
-if [ -z "$APP_SERVICE_NAME" ]; then
-  echo "❌ App Service not found. Trying manual resource creation..."
-  
-  # Create App Service Plan and Web App manually
-  APP_SERVICE_PLAN_NAME="${AZURE_ENV_NAME}-plan"
-  APP_SERVICE_NAME="${AZURE_ENV_NAME}-app"
-  
-  echo "Creating App Service Plan: $APP_SERVICE_PLAN_NAME"
-  az appservice plan create \
-    --name $APP_SERVICE_PLAN_NAME \
-    --resource-group $AZURE_RESOURCE_GROUP \
-    --location $AZURE_LOCATION \
-    --sku B1 \
-    --is-linux
-  
-  echo "Creating Web App: $APP_SERVICE_NAME"
-  az webapp create \
-    --name $APP_SERVICE_NAME \
-    --resource-group $AZURE_RESOURCE_GROUP \
-    --plan $APP_SERVICE_PLAN_NAME \
-    --runtime "PYTHON|3.11"
-fi
+echo "✅ Azure resources created successfully!"
 
 echo "App Service: $APP_SERVICE_NAME"
 
@@ -162,7 +132,7 @@ echo "Resources created in resource group: $AZURE_RESOURCE_GROUP"
 echo "- App Service: $APP_SERVICE_NAME"
 
 # Cleanup
-rm -f rg-deployment-parameters.json app-package.zip
+rm -f app-package.zip
 rm -rf deploy/
 
 echo ""
