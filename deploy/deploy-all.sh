@@ -36,16 +36,28 @@ chmod +x deploy/02-deploy-app.sh
 echo ""
 echo "🏗️  Step 1: Preparing Azure Resources..."
 echo "======================================="
-./deploy/01-prepare-resources.sh
+if ! ./deploy/01-prepare-resources.sh; then
+    echo "❌ Resource preparation failed!"
+    echo "Please check the error messages above and try again."
+    exit 1
+fi
 
 echo ""
-echo "📋 Pausing for 30 seconds to allow resources to be fully ready..."
-sleep 30
+echo "✅ Resource preparation completed successfully!"
+echo ""
+echo "📋 All resources are ready! Proceeding to application deployment..."
+echo "   (Individual resources already waited for readiness)"
 
 echo ""
 echo "🚀 Step 2: Deploying Applications..."
 echo "===================================="
-./deploy/02-deploy-app.sh
+if ! ./deploy/02-deploy-app.sh; then
+    echo "❌ Application deployment failed!"
+    echo "Please check the error messages above."
+    echo "Resources have been created - you can retry deployment with:"
+    echo "  ./deploy/02-deploy-app.sh"
+    exit 1
+fi
 
 echo ""
 echo "✅ Complete deployment finished!"

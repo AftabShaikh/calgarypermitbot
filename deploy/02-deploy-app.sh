@@ -21,6 +21,33 @@ echo "Frontend App: $FRONTEND_APP_NAME"
 echo "Storage Account: $STORAGE_ACCOUNT"
 echo ""
 
+# Validate that required resources exist
+echo "🔍 Validating required resources exist..."
+
+# Check if App Service Plan exists
+if ! az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP > /dev/null 2>&1; then
+    echo "❌ App Service Plan '$APP_SERVICE_PLAN' not found in resource group '$RESOURCE_GROUP'"
+    echo "Please run ./deploy/01-prepare-resources.sh first to create the required resources."
+    exit 1
+fi
+
+# Check if backend app exists
+if ! az webapp show --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP > /dev/null 2>&1; then
+    echo "❌ Backend web app '$BACKEND_APP_NAME' not found in resource group '$RESOURCE_GROUP'"
+    echo "Please run ./deploy/01-prepare-resources.sh first to create the required resources."
+    exit 1
+fi
+
+# Check if storage account exists
+if ! az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP > /dev/null 2>&1; then
+    echo "❌ Storage account '$STORAGE_ACCOUNT' not found in resource group '$RESOURCE_GROUP'"
+    echo "Please run ./deploy/01-prepare-resources.sh first to create the required resources."
+    exit 1
+fi
+
+echo "✅ All required resources found!"
+echo ""
+
 # Step 1: Upload data files to storage
 echo "📁 Uploading data files to storage account..."
 

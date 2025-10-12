@@ -25,58 +25,255 @@ echo ""
 
 # Step 1: Create Resource Group
 echo "📦 Creating resource group..."
-az group create \
+echo "   Name: $RESOURCE_GROUP"
+echo "   Location: $LOCATION"
+
+if az group create \
     --name $RESOURCE_GROUP \
-    --location $LOCATION
+    --location $LOCATION; then
+    echo "✅ Resource group created successfully"
+    
+    # Wait for resource group to be fully ready
+    echo "⏳ Waiting for resource group to be fully ready..."
+    TIMEOUT=60
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        if az group show --name $RESOURCE_GROUP --query "properties.provisioningState" -o tsv 2>/dev/null | grep -q "Succeeded"; then
+            echo "✅ Resource group is ready"
+            break
+        fi
+        echo "   Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 5
+        COUNTER=$((COUNTER + 5))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "⚠️  Timeout waiting for resource group, but continuing..."
+    fi
+else
+    echo "❌ Failed to create resource group"
+    exit 1
+fi
 
 # Step 2: Create App Service Plan (S1 tier - Standard)
 echo "🖥️  Creating App Service Plan..."
-az appservice plan create \
+echo "   Plan Name: $APP_SERVICE_PLAN"
+echo "   Resource Group: $RESOURCE_GROUP"
+echo "   Location: $LOCATION"
+echo "   SKU: S1 (Standard)"
+
+if az appservice plan create \
     --name $APP_SERVICE_PLAN \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
     --sku S1 \
-    --is-linux
+    --is-linux; then
+    echo "✅ App Service Plan creation initiated"
+    
+    # Wait for App Service Plan to be fully ready
+    echo "⏳ Waiting for App Service Plan to be ready..."
+    TIMEOUT=300  # 5 minutes
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        STATUS=$(az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
+        if [ "$STATUS" = "Succeeded" ]; then
+            echo "✅ App Service Plan is ready"
+            break
+        elif [ "$STATUS" = "Failed" ]; then
+            echo "❌ App Service Plan creation failed"
+            exit 1
+        fi
+        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 10
+        COUNTER=$((COUNTER + 10))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "❌ Timeout waiting for App Service Plan creation"
+        exit 1
+    fi
+else
+    echo "❌ Failed to create App Service Plan"
+    echo "This could be due to:"
+    echo "   - Insufficient quota in the subscription"
+    echo "   - Linux App Service Plans not available in $LOCATION"
+    echo "   - Name conflict (unlikely with timestamp suffix)"
+    echo ""
+    echo "Trying to check existing plans in the resource group..."
+    az appservice plan list --resource-group $RESOURCE_GROUP -o table || true
+    exit 1
+fi
 
 # Step 3: Create Backend Web App
 echo "🔧 Creating Backend Web App..."
-az webapp create \
+echo "   Name: $BACKEND_APP_NAME"
+
+if az webapp create \
     --name $BACKEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
     --plan $APP_SERVICE_PLAN \
     --runtime "PYTHON|3.11" \
-    --startup-file "python run_app.py"
+    --startup-file "python run_app.py"; then
+    
+    echo "✅ Backend Web App creation initiated"
+    
+    # Wait for backend web app to be ready
+    echo "⏳ Waiting for Backend Web App to be ready..."
+    TIMEOUT=300  # 5 minutes
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        STATUS=$(az webapp show --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --query "state" -o tsv 2>/dev/null)
+        if [ "$STATUS" = "Running" ]; then
+            echo "✅ Backend Web App is ready"
+            break
+        fi
+        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 10
+        COUNTER=$((COUNTER + 10))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "⚠️  Timeout waiting for Backend Web App, but continuing..."
+    fi
+else
+    echo "❌ Failed to create Backend Web App"
+    exit 1
+fi
 
 # Enable managed identity for backend
 echo "🔐 Enabling managed identity for backend..."
-az webapp identity assign \
+if az webapp identity assign \
     --name $BACKEND_APP_NAME \
-    --resource-group $RESOURCE_GROUP
+    --resource-group $RESOURCE_GROUP; then
+    
+    echo "✅ Managed identity assignment initiated"
+    
+    # Wait for managed identity to be ready
+    echo "⏳ Waiting for managed identity to be ready..."
+    TIMEOUT=120  # 2 minutes
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        PRINCIPAL_ID=$(az webapp identity show --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --query "principalId" -o tsv 2>/dev/null)
+        if [ -n "$PRINCIPAL_ID" ] && [ "$PRINCIPAL_ID" != "null" ]; then
+            echo "✅ Managed identity is ready (Principal ID: $PRINCIPAL_ID)"
+            break
+        fi
+        echo "   Waiting for principal ID... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 5
+        COUNTER=$((COUNTER + 5))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "⚠️  Timeout waiting for managed identity, but continuing..."
+    fi
+else
+    echo "❌ Failed to enable managed identity"
+    exit 1
+fi
 
 # Step 4: Create Frontend Web App
 echo "🎨 Creating Frontend Web App..."
-az webapp create \
+echo "   Name: $FRONTEND_APP_NAME"
+
+if az webapp create \
     --name $FRONTEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
     --plan $APP_SERVICE_PLAN \
-    --runtime "NODE|20-lts"
+    --runtime "NODE|20-lts"; then
+    
+    echo "✅ Frontend Web App creation initiated"
+    
+    # Wait for frontend web app to be ready
+    echo "⏳ Waiting for Frontend Web App to be ready..."
+    TIMEOUT=300  # 5 minutes
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        STATUS=$(az webapp show --name $FRONTEND_APP_NAME --resource-group $RESOURCE_GROUP --query "state" -o tsv 2>/dev/null)
+        if [ "$STATUS" = "Running" ]; then
+            echo "✅ Frontend Web App is ready"
+            break
+        fi
+        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 10
+        COUNTER=$((COUNTER + 10))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "⚠️  Timeout waiting for Frontend Web App, but continuing..."
+    fi
+else
+    echo "❌ Failed to create Frontend Web App"
+    exit 1
+fi
 
 # Step 5: Create Storage Account
 echo "💾 Creating Storage Account..."
-az storage account create \
+echo "   Name: $STORAGE_ACCOUNT"
+
+if az storage account create \
     --name $STORAGE_ACCOUNT \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
     --sku Standard_LRS \
     --kind StorageV2 \
-    --allow-blob-public-access false
+    --allow-blob-public-access false; then
+    
+    echo "✅ Storage Account creation initiated"
+    
+    # Wait for storage account to be ready
+    echo "⏳ Waiting for Storage Account to be ready..."
+    TIMEOUT=180  # 3 minutes
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        STATUS=$(az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
+        if [ "$STATUS" = "Succeeded" ]; then
+            echo "✅ Storage Account is ready"
+            break
+        fi
+        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 10
+        COUNTER=$((COUNTER + 10))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "❌ Timeout waiting for Storage Account creation"
+        exit 1
+    fi
+else
+    echo "❌ Failed to create Storage Account"
+    exit 1
+fi
 
 # Create content container
 echo "📁 Creating storage container..."
-az storage container create \
+if az storage container create \
     --name content \
     --account-name $STORAGE_ACCOUNT \
-    --auth-mode login
+    --auth-mode login; then
+    
+    echo "✅ Storage container created"
+    
+    # Wait for container to be accessible
+    echo "⏳ Waiting for storage container to be ready..."
+    TIMEOUT=60
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        if az storage container show --name content --account-name $STORAGE_ACCOUNT --auth-mode login > /dev/null 2>&1; then
+            echo "✅ Storage container is ready"
+            break
+        fi
+        echo "   Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 5
+        COUNTER=$((COUNTER + 5))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "⚠️  Timeout waiting for storage container, but continuing..."
+    fi
+else
+    echo "❌ Failed to create storage container"
+    exit 1
+fi
 
 # Step 6: Create Azure AI Search Service
 echo "🔍 Creating Azure AI Search Service..."
@@ -127,7 +324,10 @@ az provider register --namespace Microsoft.DocumentDB || true
 
 # Step 11: Create Cosmos DB Account
 echo "🗄️  Creating Cosmos DB account..."
-az cosmosdb create \
+echo "   Name: $COSMOS_ACCOUNT"
+echo "   This may take several minutes..."
+
+if az cosmosdb create \
     --name $COSMOS_ACCOUNT \
     --resource-group $RESOURCE_GROUP \
     --kind GlobalDocumentDB \
@@ -135,7 +335,33 @@ az cosmosdb create \
     --default-consistency-level Session \
     --enable-automatic-failover false \
     --enable-multiple-write-locations false \
-    --capabilities EnableServerless
+    --capabilities EnableServerless; then
+    
+    echo "✅ Cosmos DB creation initiated"
+    
+    # Wait for Cosmos DB to be ready (this can take a while)
+    echo "⏳ Waiting for Cosmos DB to be ready (this may take 5-10 minutes)..."
+    TIMEOUT=600  # 10 minutes
+    COUNTER=0
+    while [ $COUNTER -lt $TIMEOUT ]; do
+        STATUS=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
+        if [ "$STATUS" = "Succeeded" ]; then
+            echo "✅ Cosmos DB is ready"
+            break
+        fi
+        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
+        sleep 30
+        COUNTER=$((COUNTER + 30))
+    done
+    
+    if [ $COUNTER -ge $TIMEOUT ]; then
+        echo "❌ Timeout waiting for Cosmos DB creation"
+        exit 1
+    fi
+else
+    echo "❌ Failed to create Cosmos DB account"
+    exit 1
+fi
 
 # Create Cosmos DB database and container
 echo "📊 Creating Cosmos DB database and container..."
@@ -164,11 +390,23 @@ OPENAI_ID=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-
 COSMOS_ID=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query id -o tsv)
 
 # Assign roles
+echo "🔑 Assigning Storage Blob Data Contributor role..."
 az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Storage Blob Data Contributor" --scope $STORAGE_ID
+
+echo "🔑 Assigning Search roles..."
 az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Search Index Data Contributor" --scope $SEARCH_ID
 az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Search Service Contributor" --scope $SEARCH_ID
+
+echo "🔑 Assigning OpenAI role..."
 az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Cognitive Services OpenAI User" --scope $OPENAI_ID
+
+echo "🔑 Assigning Cosmos DB role..."
 az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Cosmos DB Account Reader Role" --scope $COSMOS_ID
+
+# Wait for role assignments to propagate
+echo "⏳ Waiting for role assignments to propagate..."
+sleep 60
+echo "✅ Role assignments completed"
 
 # Step 13: Configure Backend App Settings
 echo "⚙️  Configuring backend app settings..."
