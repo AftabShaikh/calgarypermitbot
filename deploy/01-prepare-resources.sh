@@ -5,6 +5,34 @@
 
 set -e  # Exit on any error
 
+# Function to run Azure CLI commands with error capture
+run_az_command() {
+    local description="$1"
+    shift  # Remove first argument, rest are the command
+    
+    echo "🔄 $description..."
+    
+    # Capture both stdout and stderr
+    local output
+    local exit_code
+    output=$("$@" 2>&1)
+    exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        echo "✅ $description completed successfully"
+        # If there's useful output, show it
+        if [ -n "$output" ] && ! echo "$output" | grep -q '^{.*}$'; then
+            echo "$output"
+        fi
+    else
+        echo "❌ $description failed"
+        echo "Command: $*"
+        echo "Error details:"
+        echo "$output"
+        return $exit_code
+    fi
+}
+
 # Configuration
 RESOURCE_GROUP="rg-calgarypermitbot"
 LOCATION="westus2"
@@ -21,16 +49,34 @@ echo "=================================================="
 echo "Resource Group: $RESOURCE_GROUP"
 echo "Location: $LOCATION"
 echo "Storage Account: $STORAGE_ACCOUNT"
+echo "Backend App: $BACKEND_APP_NAME"
+echo "Frontend App: $FRONTEND_APP_NAME"
 echo ""
+
+# Check if user wants verbose output
+if [ "$1" = "-v" ] || [ "$1" = "--verbose" ]; then
+    VERBOSE=true
+    echo "🔍 Verbose mode enabled - showing detailed Azure CLI output"
+    echo ""
+else
+    VERBOSE=false
+    echo "💡 Tip: Use '$0 --verbose' for detailed Azure CLI output"
+    echo ""
+fi
 
 # Step 1: Create Resource Group
 echo "📦 Creating resource group..."
 echo "   Name: $RESOURCE_GROUP"
 echo "   Location: $LOCATION"
 
-if az group create \
+# Capture both stdout and stderr for resource group creation
+echo "Creating resource group..."
+RG_OUTPUT=$(az group create \
     --name $RESOURCE_GROUP \
-    --location $LOCATION; then
+    --location $LOCATION 2>&1)
+RG_EXIT_CODE=$?
+
+if [ $RG_EXIT_CODE -eq 0 ]; then
     echo "✅ Resource group created successfully"
     
     # Wait for resource group to be fully ready
@@ -52,6 +98,8 @@ if az group create \
     fi
 else
     echo "❌ Failed to create resource group"
+    echo "Error details:"
+    echo "$RG_OUTPUT"
     exit 1
 fi
 
@@ -62,12 +110,17 @@ echo "   Resource Group: $RESOURCE_GROUP"
 echo "   Location: $LOCATION"
 echo "   SKU: S1 (Standard)"
 
-if az appservice plan create \
+# Capture both stdout and stderr for App Service Plan creation
+echo "Creating App Service Plan..."
+ASP_OUTPUT=$(az appservice plan create \
     --name $APP_SERVICE_PLAN \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
     --sku S1 \
-    --is-linux; then
+    --is-linux 2>&1)
+ASP_EXIT_CODE=$?
+
+if [ $ASP_EXIT_CODE -eq 0 ]; then
     echo "✅ App Service Plan creation initiated"
     
     # Wait for App Service Plan to be fully ready
@@ -80,7 +133,9 @@ if az appservice plan create \
             echo "✅ App Service Plan is ready"
             break
         elif [ "$STATUS" = "Failed" ]; then
-            echo "❌ App Service Plan creation failed"
+            echo "❌ App Service Plan creation failed during provisioning"
+            # Get detailed error information
+            az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "{Status:provisioningState,Error:error}" -o json || true
             exit 1
         fi
         echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
@@ -90,17 +145,26 @@ if az appservice plan create \
     
     if [ $COUNTER -ge $TIMEOUT ]; then
         echo "❌ Timeout waiting for App Service Plan creation"
+        # Show current status
+        az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "{Status:provisioningState,Sku:sku}" -o json || true
         exit 1
     fi
 else
     echo "❌ Failed to create App Service Plan"
+    echo "Error details:"
+    echo "$ASP_OUTPUT"
+    echo ""
     echo "This could be due to:"
     echo "   - Insufficient quota in the subscription"
     echo "   - Linux App Service Plans not available in $LOCATION"
     echo "   - Name conflict (unlikely with timestamp suffix)"
+    echo "   - SKU S1 not available in this region/subscription"
     echo ""
-    echo "Trying to check existing plans in the resource group..."
+    echo "Checking existing plans in the resource group..."
     az appservice plan list --resource-group $RESOURCE_GROUP -o table || true
+    echo ""
+    echo "Checking available SKUs in $LOCATION..."
+    az appservice list-locations --sku S1 --linux-workers-enabled --query "[?contains(name, '$LOCATION')]" -o table || true
     exit 1
 fi
 
@@ -108,13 +172,17 @@ fi
 echo "🔧 Creating Backend Web App..."
 echo "   Name: $BACKEND_APP_NAME"
 
-if az webapp create \
+# Capture both stdout and stderr for Backend Web App creation
+echo "Creating Backend Web App..."
+BACKEND_OUTPUT=$(az webapp create \
     --name $BACKEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
     --plan $APP_SERVICE_PLAN \
     --runtime "PYTHON|3.11" \
-    --startup-file "python run_app.py"; then
-    
+    --startup-file "python run_app.py" 2>&1)
+BACKEND_EXIT_CODE=$?
+
+if [ $BACKEND_EXIT_CODE -eq 0 ]; then
     echo "✅ Backend Web App creation initiated"
     
     # Wait for backend web app to be ready
@@ -137,15 +205,21 @@ if az webapp create \
     fi
 else
     echo "❌ Failed to create Backend Web App"
+    echo "Error details:"
+    echo "$BACKEND_OUTPUT"
     exit 1
 fi
 
 # Enable managed identity for backend
 echo "🔐 Enabling managed identity for backend..."
-if az webapp identity assign \
+# Capture both stdout and stderr for managed identity assignment
+echo "Enabling managed identity..."
+IDENTITY_OUTPUT=$(az webapp identity assign \
     --name $BACKEND_APP_NAME \
-    --resource-group $RESOURCE_GROUP; then
-    
+    --resource-group $RESOURCE_GROUP 2>&1)
+IDENTITY_EXIT_CODE=$?
+
+if [ $IDENTITY_EXIT_CODE -eq 0 ]; then
     echo "✅ Managed identity assignment initiated"
     
     # Wait for managed identity to be ready
@@ -168,6 +242,8 @@ if az webapp identity assign \
     fi
 else
     echo "❌ Failed to enable managed identity"
+    echo "Error details:"
+    echo "$IDENTITY_OUTPUT"
     exit 1
 fi
 
@@ -175,12 +251,16 @@ fi
 echo "🎨 Creating Frontend Web App..."
 echo "   Name: $FRONTEND_APP_NAME"
 
-if az webapp create \
+# Capture both stdout and stderr for Frontend Web App creation
+echo "Creating Frontend Web App..."
+FRONTEND_OUTPUT=$(az webapp create \
     --name $FRONTEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
     --plan $APP_SERVICE_PLAN \
-    --runtime "NODE|20-lts"; then
-    
+    --runtime "NODE|20-lts" 2>&1)
+FRONTEND_EXIT_CODE=$?
+
+if [ $FRONTEND_EXIT_CODE -eq 0 ]; then
     echo "✅ Frontend Web App creation initiated"
     
     # Wait for frontend web app to be ready
@@ -203,6 +283,8 @@ if az webapp create \
     fi
 else
     echo "❌ Failed to create Frontend Web App"
+    echo "Error details:"
+    echo "$FRONTEND_OUTPUT"
     exit 1
 fi
 

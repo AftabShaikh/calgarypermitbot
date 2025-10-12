@@ -8,6 +8,8 @@ set -e  # Exit on any error
 echo "🚀 Calgary Permit Bot - Complete Deployment"
 echo "==========================================="
 echo ""
+echo "Usage: $0 [--verbose|-v]"
+echo ""
 echo "This script will:"
 echo "1. Create all necessary Azure resources"
 echo "2. Deploy the frontend and backend applications"
@@ -19,6 +21,14 @@ echo "- Location: West US 2"
 echo "- App Service Plan: S1 (Standard)"
 echo "- Two Web Apps: Frontend + Backend"
 echo ""
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Options:"
+    echo "  --verbose, -v    Show detailed Azure CLI output"
+    echo "  --help, -h       Show this help message"
+    echo ""
+    exit 0
+fi
 
 read -p "Press Enter to continue or Ctrl+C to cancel..."
 
@@ -36,9 +46,18 @@ chmod +x deploy/02-deploy-app.sh
 echo ""
 echo "🏗️  Step 1: Preparing Azure Resources..."
 echo "======================================="
-if ! ./deploy/01-prepare-resources.sh; then
+# Pass through verbose flag if provided
+VERBOSE_FLAG=""
+if [ "$1" = "-v" ] || [ "$1" = "--verbose" ]; then
+    VERBOSE_FLAG="--verbose"
+fi
+
+if ! ./deploy/01-prepare-resources.sh $VERBOSE_FLAG; then
     echo "❌ Resource preparation failed!"
     echo "Please check the error messages above and try again."
+    echo ""
+    echo "💡 Try running with --verbose for more details:"
+    echo "   ./deploy/deploy-all.sh --verbose"
     exit 1
 fi
 
