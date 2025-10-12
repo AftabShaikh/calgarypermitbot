@@ -1,0 +1,19 @@
+# Minimal requirements for Azure App Service deployment
+quart>=0.19.4
+gunicorn>=21.2.0
+uvicorn[standard]>=0.24.0
+
+# Core Azure packages
+azure-identity>=1.15.0
+azure-storage-blob>=12.19.0
+azure-search-documents>=11.4.0
+azure-cognitiveservices-speech>=1.40.0
+azure-cosmos>=4.9.0
+azure-ai-documentintelligence>=1.0.0b4
+
+# OpenAI
+openai>=1.12.0
+
+# Other essentials
+aiohttp>=3.10.0
+aiofiles>=24.1.0
