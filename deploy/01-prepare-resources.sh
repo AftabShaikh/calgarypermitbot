@@ -117,47 +117,62 @@ else
     exit 1
 fi
 
-# Helper functions for resource detection
-check_resource_exists() {
+# Helper functions for resource detection by type (not name)
+find_existing_resource() {
     local resource_type="$1"
-    local resource_name="$2"
     
     case "$resource_type" in
         "storage")
-            az storage account show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            # Find any storage account in the resource group
+            az storage account list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null
             ;;
         "search") 
-            az search service show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            # Find any search service in the resource group
+            az search service list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null
             ;;
         "openai")
-            az cognitiveservices account show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            # Find any cognitive services account with kind=OpenAI in the resource group
+            az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].name" -o tsv 2>/dev/null
             ;;
         "cosmos")
-            az cosmosdb show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            # Find any Cosmos DB account in the resource group
+            az cosmosdb list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null
             ;;
         "appplan")
-            az appservice plan show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            # Find any app service plan in the resource group
+            az appservice plan list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null
             ;;
-        "webapp")
-            az webapp show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+        "webapp-backend")
+            # Find backend web app (Python runtime)
+            az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(siteConfig.linuxFxVersion, 'PYTHON')][0].name" -o tsv 2>/dev/null
+            ;;
+        "webapp-frontend")
+            # Find frontend web app (Node.js runtime) 
+            az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(siteConfig.linuxFxVersion, 'NODE')][0].name" -o tsv 2>/dev/null
             ;;
     esac
 }
 
 echo ""
-echo "🔧 Phase 1: Creating Backend Infrastructure Services"  
-echo "=================================================="
-echo "🔍 Checking for existing resources first..."
+echo "🔧 Phase 1: Backend Infrastructure Services"  
+echo "==========================================="
+echo "🔍 Scanning resource group for existing resources..."
+echo "   Resource Group: $RESOURCE_GROUP"
+echo "   This will reuse any existing resources of the correct type"
+echo ""
 
 # Step 2: Create Storage Account FIRST (needed for document storage) 
-echo "💾 Checking Storage Account..."
-echo "   Name: $STORAGE_ACCOUNT"
+echo "💾 Checking for existing Storage Account..."
 
-# Check if storage account already exists
-if EXISTING_STORAGE=$(check_resource_exists "storage" "$STORAGE_ACCOUNT"); then
-    echo "✅ Storage Account '$STORAGE_ACCOUNT' already exists - skipping creation"
+# Check if any storage account already exists in the resource group
+if EXISTING_STORAGE=$(find_existing_resource "storage"); then
+    echo "✅ Found existing Storage Account '$EXISTING_STORAGE' - skipping creation"
     export STORAGE_ACCOUNT="$EXISTING_STORAGE"
-elif az storage account create \
+    echo "   Using existing: $STORAGE_ACCOUNT"
+else
+    echo "   No existing storage account found, creating: $STORAGE_ACCOUNT"
+
+if az storage account create \
     --name $STORAGE_ACCOUNT \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
@@ -236,15 +251,15 @@ else
 fi
 
 # Step 4: Create Azure AI Search Service with retry logic
-echo "🔍 Checking Azure AI Search Service..."
-echo "   Name: $SEARCH_SERVICE"
+echo "🔍 Checking for existing AI Search Service..."
 
-# Check if search service already exists
-if EXISTING_SEARCH=$(check_resource_exists "search" "$SEARCH_SERVICE"); then
-    echo "✅ AI Search Service '$SEARCH_SERVICE' already exists - skipping creation"
+# Check if any search service already exists in the resource group
+if EXISTING_SEARCH=$(find_existing_resource "search"); then
+    echo "✅ Found existing AI Search Service '$EXISTING_SEARCH' - skipping creation"
     export SEARCH_SERVICE="$EXISTING_SEARCH"
+    echo "   Using existing: $SEARCH_SERVICE"
 else
-    echo "   Creating new AI Search Service..."
+    echo "   No existing search service found, creating: $SEARCH_SERVICE"
 
 # Function to create search service with retry logic
 create_search_service() {
@@ -344,15 +359,6 @@ az provider register --namespace Microsoft.CognitiveServices || true
 echo "🧠 Checking Azure OpenAI Service..."
 echo "   Name: $OPENAI_SERVICE"
 
-# Check if OpenAI service already exists
-if EXISTING_OPENAI=$(check_resource_exists "openai" "$OPENAI_SERVICE"); then
-    echo "✅ OpenAI Service '$OPENAI_SERVICE' already exists - skipping creation"
-    export OPENAI_SERVICE="$EXISTING_OPENAI"
-    OPENAI_EXIT_CODE=0
-    DEPLOY_MODELS=true
-else
-    echo "   Creating new OpenAI Service..."
-
 # Function to create OpenAI service with retry logic and quota handling
 create_openai_service() {
     local service_name="$1"
@@ -410,8 +416,18 @@ create_openai_service() {
     return 1
 }
 
-OPENAI_RESULT=$(create_openai_service "$OPENAI_SERVICE")
-OPENAI_EXIT_CODE=$?
+# Check if any OpenAI service already exists in the resource group
+if EXISTING_OPENAI=$(find_existing_resource "openai"); then
+    echo "✅ Found existing OpenAI Service '$EXISTING_OPENAI' - skipping creation"
+    export OPENAI_SERVICE="$EXISTING_OPENAI"
+    echo "   Using existing: $OPENAI_SERVICE"
+    OPENAI_EXIT_CODE=0
+    DEPLOY_MODELS=true
+else
+    echo "   No existing OpenAI service found, creating: $OPENAI_SERVICE"
+    OPENAI_RESULT=$(create_openai_service "$OPENAI_SERVICE")
+    OPENAI_EXIT_CODE=$?
+fi
 
 if [ $OPENAI_EXIT_CODE -eq 0 ]; then
     echo "✅ OpenAI Service creation initiated"
@@ -506,15 +522,15 @@ fi
 echo "🌐 Registering Cosmos DB provider..."
 az provider register --namespace Microsoft.DocumentDB || true
 
-echo "🗄️  Checking Cosmos DB account..."
-echo "   Name: $COSMOS_ACCOUNT"
+echo "🗄️  Checking for existing Cosmos DB account..."
 
-# Check if Cosmos DB account already exists
-if EXISTING_COSMOS=$(check_resource_exists "cosmos" "$COSMOS_ACCOUNT"); then
-    echo "✅ Cosmos DB account '$COSMOS_ACCOUNT' already exists - skipping creation"
+# Check if any Cosmos DB account already exists in the resource group
+if EXISTING_COSMOS=$(find_existing_resource "cosmos"); then
+    echo "✅ Found existing Cosmos DB account '$EXISTING_COSMOS' - skipping creation"
     export COSMOS_ACCOUNT="$EXISTING_COSMOS"
+    echo "   Using existing: $COSMOS_ACCOUNT"
 else
-    echo "   Creating new Cosmos DB account..."
+    echo "   No existing Cosmos DB found, creating: $COSMOS_ACCOUNT"
     echo "   This may take several minutes..."
 
 # Function to create Cosmos DB with retry logic
@@ -638,18 +654,18 @@ echo "🔧 Phase 2: Creating App Service Infrastructure"
 echo "==============================================="
 
 # Step 9: Create App Service Plan
-echo "🖥️  Checking App Service Plan..."
-echo "   Plan Name: $APP_SERVICE_PLAN"
-echo "   Resource Group: $RESOURCE_GROUP"
-echo "   Location: $LOCATION"
-echo "   SKU: $APP_SERVICE_SKU (Basic)"
+echo "🖥️  Checking for existing App Service Plan..."
 
-# Check if App Service Plan already exists
-if EXISTING_PLAN=$(check_resource_exists "appplan" "$APP_SERVICE_PLAN"); then
-    echo "✅ App Service Plan '$APP_SERVICE_PLAN' already exists - skipping creation"
+# Check if any App Service Plan already exists in the resource group
+if EXISTING_PLAN=$(find_existing_resource "appplan"); then
+    echo "✅ Found existing App Service Plan '$EXISTING_PLAN' - skipping creation"
     export APP_SERVICE_PLAN="$EXISTING_PLAN"
+    echo "   Using existing: $APP_SERVICE_PLAN"
 else
-    echo "   Creating new App Service Plan..."
+    echo "   No existing app service plan found, creating: $APP_SERVICE_PLAN"
+    echo "   Resource Group: $RESOURCE_GROUP"
+    echo "   Location: $LOCATION"
+    echo "   SKU: $APP_SERVICE_SKU (Basic)"
 
 # Capture both stdout and stderr for App Service Plan creation
 echo "Creating App Service Plan..."
@@ -719,12 +735,15 @@ fi
 fi
 
 # Step 11: Create Backend Web App
-echo "🔧 Checking Backend Web App..."
-echo "   Name: $BACKEND_APP_NAME"
+echo "🔧 Checking for existing Backend Web App..."
 
-# Check if Backend Web App already exists
-if EXISTING_BACKEND=$(check_resource_exists "webapp" "$BACKEND_APP_NAME"); then
-    echo "✅ Backend Web App '$BACKEND_APP_NAME' already exists - skipping creation"
+# Check if any Python backend web app already exists in the resource group
+if EXISTING_BACKEND=$(find_existing_resource "webapp-backend"); then
+    echo "✅ Found existing Backend Web App '$EXISTING_BACKEND' - skipping creation"
+    export BACKEND_APP_NAME="$EXISTING_BACKEND"
+    echo "   Using existing: $BACKEND_APP_NAME"
+else
+    echo "   No existing backend web app found, creating: $BACKEND_APP_NAME"
     export BACKEND_APP_NAME="$EXISTING_BACKEND"
 else
     echo "   Creating new Backend Web App..."
@@ -772,15 +791,15 @@ fi
 fi
 
 # Step 12: Create Frontend Web App
-echo "🎨 Checking Frontend Web App..."
-echo "   Name: $FRONTEND_APP_NAME"
+echo "🎨 Checking for existing Frontend Web App..."
 
-# Check if Frontend Web App already exists
-if EXISTING_FRONTEND=$(check_resource_exists "webapp" "$FRONTEND_APP_NAME"); then
-    echo "✅ Frontend Web App '$FRONTEND_APP_NAME' already exists - skipping creation"
+# Check if any Node.js frontend web app already exists in the resource group
+if EXISTING_FRONTEND=$(find_existing_resource "webapp-frontend"); then
+    echo "✅ Found existing Frontend Web App '$EXISTING_FRONTEND' - skipping creation"
     export FRONTEND_APP_NAME="$EXISTING_FRONTEND"
+    echo "   Using existing: $FRONTEND_APP_NAME"
 else
-    echo "   Creating new Frontend Web App..."
+    echo "   No existing frontend web app found, creating: $FRONTEND_APP_NAME"
 
 if az webapp create \
     --name $FRONTEND_APP_NAME \
