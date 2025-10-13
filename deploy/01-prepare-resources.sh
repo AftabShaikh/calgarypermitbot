@@ -5,6 +5,18 @@
 
 set -e  # Exit on any error
 
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+
+# Load configuration
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    source "$SCRIPT_DIR/config.sh"
+    echo "📋 Configuration loaded from config.sh"
+else
+    echo "❌ Configuration file not found at $SCRIPT_DIR/config.sh"
+    exit 1
+fi
+
 # Function to run Azure CLI commands with error capture
 run_az_command() {
     local description="$1"
@@ -33,16 +45,17 @@ run_az_command() {
     fi
 }
 
-# Configuration
-RESOURCE_GROUP="rg-calgarypermitbot"
-LOCATION="westus2"
-APP_SERVICE_PLAN="asp-calgarypermitbot"
-BACKEND_APP_NAME="calgarypermitbot-backend"
-FRONTEND_APP_NAME="calgarypermitbot-frontend"
-STORAGE_ACCOUNT="calgarypermitbotstg$(date +%s | tail -c 6)"  # Random suffix to ensure uniqueness
-SEARCH_SERVICE="calgarypermitbot-search"
-OPENAI_SERVICE="calgarypermitbot-openai"
-COSMOS_ACCOUNT="calgarypermitbot-cosmos"
+# Auto-detect subscription if not set
+if [ -z "$SUBSCRIPTION_ID" ]; then
+    echo "🔍 Auto-detecting Azure subscription..."
+    SUBSCRIPTION_ID=$(az account show --query id -o tsv 2>/dev/null)
+    if [ -n "$SUBSCRIPTION_ID" ]; then
+        echo "✅ Using subscription: $SUBSCRIPTION_ID"
+    else
+        echo "❌ No active Azure subscription found. Please run 'az login' first."
+        exit 1
+    fi
+fi
 
 echo "🚀 Starting Calgary Permit Bot Resource Preparation"
 echo "=================================================="
@@ -414,7 +427,7 @@ echo "�🖥️  Creating App Service Plan..."
 echo "   Plan Name: $APP_SERVICE_PLAN"
 echo "   Resource Group: $RESOURCE_GROUP"
 echo "   Location: $LOCATION"
-echo "   SKU: S1 (Standard)"
+echo "   SKU: $APP_SERVICE_SKU (Basic)"
 
 # Capture both stdout and stderr for App Service Plan creation
 echo "Creating App Service Plan..."
@@ -422,7 +435,7 @@ ASP_OUTPUT=$(az appservice plan create \
     --name $APP_SERVICE_PLAN \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
-    --sku S1 \
+    --sku $APP_SERVICE_SKU \
     --is-linux 2>&1)
 ASP_EXIT_CODE=$?
 
@@ -1045,12 +1058,16 @@ cat > /tmp/deployment-config.env << EOF
 RESOURCE_GROUP=$RESOURCE_GROUP
 LOCATION=$LOCATION
 APP_SERVICE_PLAN=$APP_SERVICE_PLAN
+APP_SERVICE_SKU=$APP_SERVICE_SKU
 BACKEND_APP_NAME=$BACKEND_APP_NAME
 FRONTEND_APP_NAME=$FRONTEND_APP_NAME
 STORAGE_ACCOUNT=$STORAGE_ACCOUNT
+STORAGE_CONTAINER=$STORAGE_CONTAINER
 SEARCH_SERVICE=$SEARCH_SERVICE
 OPENAI_SERVICE=$OPENAI_SERVICE
 COSMOS_ACCOUNT=$COSMOS_ACCOUNT
+COSMOS_DATABASE=$COSMOS_DATABASE
+COSMOS_CONTAINER=$COSMOS_CONTAINER
 BACKEND_PRINCIPAL_ID=$BACKEND_PRINCIPAL_ID
 STORAGE_CONNECTION=$STORAGE_CONNECTION
 SEARCH_ENDPOINT=$SEARCH_ENDPOINT

@@ -29,10 +29,22 @@ Step-by-step manual deployment using Azure CLI commands.
    cd calgarypermitbot
    ```
 
-3. **Run complete deployment:**
+3. **Run complete deployment (NEW - Enhanced):**
    ```bash
-   chmod +x deploy/deploy-all.sh
-   ./deploy/deploy-all.sh
+   chmod +x deploy/quick-deploy.sh
+   ./deploy/quick-deploy.sh
+   ```
+
+   **Alternative options:**
+   ```bash
+   # Deploy apps only (if resources already exist)
+   ./deploy/quick-deploy.sh --skip-prepare
+   
+   # Skip data upload (if data already uploaded)  
+   ./deploy/quick-deploy.sh --skip-data-upload
+   
+   # Verbose output for troubleshooting
+   ./deploy/quick-deploy.sh --verbose
    ```
 
 ### Step-by-Step Deployment
@@ -52,15 +64,32 @@ If you prefer to run each step separately:
 
 ### What Gets Created
 - **Resource Group**: `rg-calgarypermitbot`
-- **Location**: West US 2
-- **App Service Plan**: S1 tier (Standard)
+- **Location**: West US 2 (configurable)
+- **App Service Plan**: B1 tier (Basic) - *Updated for cost optimization*
 - **Web Apps**: 
-  - Backend: `calgarypermitbot-backend-[suffix]`
-  - Frontend: `calgarypermitbot-frontend-[suffix]`
-- **Storage Account**: For document storage
+  - Backend: `calgarypermitbot-backend`
+  - Frontend: `calgarypermitbot-frontend`
+- **Storage Account**: For document storage with auto-upload from `data/` folder
 - **Azure AI Search**: For document indexing
-- **Azure OpenAI**: With GPT-4o-mini and text-embedding models
+- **Azure OpenAI**: With GPT-4o-mini and text-embedding models  
 - **Cosmos DB**: For chat history (serverless)
+
+### Configuration (NEW)
+Deployment settings are now centralized in `deploy/config.sh`. You can customize:
+
+```bash
+# Edit deploy/config.sh to customize settings
+export LOCATION="eastus"              # Change region
+export APP_SERVICE_SKU="S1"           # Change pricing tier
+export RESOURCE_GROUP="my-custom-rg"  # Change resource group name
+```
+
+**Key Features:**
+- ✅ **Backend services created BEFORE web apps** (proper dependency order)
+- ✅ **Automatic data upload** from `data/` folder to storage
+- ✅ **B1 pricing tier** for cost optimization
+- ✅ **US West 2** location as requested
+- ✅ **Two-step deployment** process (prepare → deploy)
 
 ---
 
