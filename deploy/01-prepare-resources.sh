@@ -117,20 +117,51 @@ else
     exit 1
 fi
 
-echo ""
-echo "🔧 Phase 1: Creating Backend Infrastructure Services"
-echo "=================================================="
+# Helper functions for resource detection
+check_resource_exists() {
+    local resource_type="$1"
+    local resource_name="$2"
+    
+    case "$resource_type" in
+        "storage")
+            az storage account show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            ;;
+        "search") 
+            az search service show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            ;;
+        "openai")
+            az cognitiveservices account show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            ;;
+        "cosmos")
+            az cosmosdb show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            ;;
+        "appplan")
+            az appservice plan show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            ;;
+        "webapp")
+            az webapp show --name "$resource_name" --resource-group "$RESOURCE_GROUP" --query "name" -o tsv 2>/dev/null
+            ;;
+    esac
+}
 
-# Step 2: Create Storage Account FIRST (needed for document storage)
-echo "💾 Creating Storage Account..."
+echo ""
+echo "🔧 Phase 1: Creating Backend Infrastructure Services"  
+echo "=================================================="
+echo "🔍 Checking for existing resources first..."
+
+# Step 2: Create Storage Account FIRST (needed for document storage) 
+echo "💾 Checking Storage Account..."
 echo "   Name: $STORAGE_ACCOUNT"
 
-if az storage account create \
+# Check if storage account already exists
+if EXISTING_STORAGE=$(check_resource_exists "storage" "$STORAGE_ACCOUNT"); then
+    echo "✅ Storage Account '$STORAGE_ACCOUNT' already exists - skipping creation"
+    export STORAGE_ACCOUNT="$EXISTING_STORAGE"
+elif az storage account create \
     --name $STORAGE_ACCOUNT \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
     --sku Standard_LRS \
-    --kind StorageV2 \
     --allow-blob-public-access false; then
     
     echo "✅ Storage Account creation initiated"
@@ -205,8 +236,15 @@ else
 fi
 
 # Step 4: Create Azure AI Search Service with retry logic
-echo "🔍 Creating Azure AI Search Service..."
+echo "🔍 Checking Azure AI Search Service..."
 echo "   Name: $SEARCH_SERVICE"
+
+# Check if search service already exists
+if EXISTING_SEARCH=$(check_resource_exists "search" "$SEARCH_SERVICE"); then
+    echo "✅ AI Search Service '$SEARCH_SERVICE' already exists - skipping creation"
+    export SEARCH_SERVICE="$EXISTING_SEARCH"
+else
+    echo "   Creating new AI Search Service..."
 
 # Function to create search service with retry logic
 create_search_service() {
@@ -290,20 +328,30 @@ create_search_service() {
     return 1
 }
 
-# Call the function with retry logic
-if create_search_service "$SEARCH_SERVICE"; then
-    echo "✅ AI Search Service creation and provisioning completed"
-else
-    echo "❌ Failed to create AI Search Service"
-    exit 1
+    # Call the function with retry logic
+    if create_search_service "$SEARCH_SERVICE"; then
+        echo "✅ AI Search Service creation and provisioning completed"
+    else
+        echo "❌ Failed to create AI Search Service"
+        exit 1
+    fi
 fi
 
 # Step 5: Register AI Services provider and create OpenAI Service
 echo "🤖 Registering AI Services provider..."
 az provider register --namespace Microsoft.CognitiveServices || true
 
-echo "🧠 Creating Azure OpenAI Service..."
+echo "🧠 Checking Azure OpenAI Service..."
 echo "   Name: $OPENAI_SERVICE"
+
+# Check if OpenAI service already exists
+if EXISTING_OPENAI=$(check_resource_exists "openai" "$OPENAI_SERVICE"); then
+    echo "✅ OpenAI Service '$OPENAI_SERVICE' already exists - skipping creation"
+    export OPENAI_SERVICE="$EXISTING_OPENAI"
+    OPENAI_EXIT_CODE=0
+    DEPLOY_MODELS=true
+else
+    echo "   Creating new OpenAI Service..."
 
 # Function to create OpenAI service with retry logic and quota handling
 create_openai_service() {
@@ -410,6 +458,7 @@ else
     echo "❌ Failed to create OpenAI Service"
     exit 1
 fi
+fi
 
 # Deploy models only if OpenAI service is available
 if [ "$DEPLOY_MODELS" = "true" ] && [ -n "$OPENAI_SERVICE" ]; then
@@ -457,9 +506,16 @@ fi
 echo "🌐 Registering Cosmos DB provider..."
 az provider register --namespace Microsoft.DocumentDB || true
 
-echo "🗄️  Creating Cosmos DB account..."
+echo "🗄️  Checking Cosmos DB account..."
 echo "   Name: $COSMOS_ACCOUNT"
-echo "   This may take several minutes..."
+
+# Check if Cosmos DB account already exists
+if EXISTING_COSMOS=$(check_resource_exists "cosmos" "$COSMOS_ACCOUNT"); then
+    echo "✅ Cosmos DB account '$COSMOS_ACCOUNT' already exists - skipping creation"
+    export COSMOS_ACCOUNT="$EXISTING_COSMOS"
+else
+    echo "   Creating new Cosmos DB account..."
+    echo "   This may take several minutes..."
 
 # Function to create Cosmos DB with retry logic
 create_cosmos_db() {
@@ -551,6 +607,7 @@ else
     echo "❌ Failed to create Cosmos DB account"
     exit 1
 fi
+fi
 
 # Step 8: Create Cosmos DB database and container
 echo "� Creating Cosmos DB database and container..."
@@ -581,11 +638,18 @@ echo "🔧 Phase 2: Creating App Service Infrastructure"
 echo "==============================================="
 
 # Step 9: Create App Service Plan
-echo "�🖥️  Creating App Service Plan..."
+echo "🖥️  Checking App Service Plan..."
 echo "   Plan Name: $APP_SERVICE_PLAN"
 echo "   Resource Group: $RESOURCE_GROUP"
 echo "   Location: $LOCATION"
 echo "   SKU: $APP_SERVICE_SKU (Basic)"
+
+# Check if App Service Plan already exists
+if EXISTING_PLAN=$(check_resource_exists "appplan" "$APP_SERVICE_PLAN"); then
+    echo "✅ App Service Plan '$APP_SERVICE_PLAN' already exists - skipping creation"
+    export APP_SERVICE_PLAN="$EXISTING_PLAN"
+else
+    echo "   Creating new App Service Plan..."
 
 # Capture both stdout and stderr for App Service Plan creation
 echo "Creating App Service Plan..."
@@ -652,10 +716,18 @@ else
     az appservice list-locations --sku S1 --linux-workers-enabled --query "[?contains(name, '$LOCATION')]" -o table || true
     exit 1
 fi
+fi
 
 # Step 11: Create Backend Web App
-echo "🔧 Creating Backend Web App..."
+echo "🔧 Checking Backend Web App..."
 echo "   Name: $BACKEND_APP_NAME"
+
+# Check if Backend Web App already exists
+if EXISTING_BACKEND=$(check_resource_exists "webapp" "$BACKEND_APP_NAME"); then
+    echo "✅ Backend Web App '$BACKEND_APP_NAME' already exists - skipping creation"
+    export BACKEND_APP_NAME="$EXISTING_BACKEND"
+else
+    echo "   Creating new Backend Web App..."
 
 # Capture both stdout and stderr for Backend Web App creation
 if az webapp create \
@@ -697,10 +769,18 @@ else
     echo "❌ Failed to create Backend Web App"
     exit 1
 fi
+fi
 
 # Step 12: Create Frontend Web App
-echo "🎨 Creating Frontend Web App..."
+echo "🎨 Checking Frontend Web App..."
 echo "   Name: $FRONTEND_APP_NAME"
+
+# Check if Frontend Web App already exists
+if EXISTING_FRONTEND=$(check_resource_exists "webapp" "$FRONTEND_APP_NAME"); then
+    echo "✅ Frontend Web App '$FRONTEND_APP_NAME' already exists - skipping creation"
+    export FRONTEND_APP_NAME="$EXISTING_FRONTEND"
+else
+    echo "   Creating new Frontend Web App..."
 
 if az webapp create \
     --name $FRONTEND_APP_NAME \
@@ -739,6 +819,7 @@ if az webapp create \
 else
     echo "❌ Failed to create Frontend Web App"
     exit 1
+fi
 fi
 
 echo ""
