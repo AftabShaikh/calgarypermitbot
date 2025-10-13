@@ -165,7 +165,8 @@ echo ""
 echo "💾 Checking for existing Storage Account..."
 
 # Check if any storage account already exists in the resource group
-if EXISTING_STORAGE=$(find_existing_resource "storage"); then
+EXISTING_STORAGE=$(find_existing_resource "storage")
+if [ -n "$EXISTING_STORAGE" ] && [ "$EXISTING_STORAGE" != "" ]; then
     echo "✅ Found existing Storage Account '$EXISTING_STORAGE' - skipping creation"
     export STORAGE_ACCOUNT="$EXISTING_STORAGE"
     echo "   Using existing: $STORAGE_ACCOUNT"
@@ -254,7 +255,8 @@ fi
 echo "🔍 Checking for existing AI Search Service..."
 
 # Check if any search service already exists in the resource group
-if EXISTING_SEARCH=$(find_existing_resource "search"); then
+EXISTING_SEARCH=$(find_existing_resource "search")
+if [ -n "$EXISTING_SEARCH" ] && [ "$EXISTING_SEARCH" != "" ]; then
     echo "✅ Found existing AI Search Service '$EXISTING_SEARCH' - skipping creation"
     export SEARCH_SERVICE="$EXISTING_SEARCH"
     echo "   Using existing: $SEARCH_SERVICE"
@@ -417,7 +419,8 @@ create_openai_service() {
 }
 
 # Check if any OpenAI service already exists in the resource group
-if EXISTING_OPENAI=$(find_existing_resource "openai"); then
+EXISTING_OPENAI=$(find_existing_resource "openai")
+if [ -n "$EXISTING_OPENAI" ] && [ "$EXISTING_OPENAI" != "" ]; then
     echo "✅ Found existing OpenAI Service '$EXISTING_OPENAI' - skipping creation"
     export OPENAI_SERVICE="$EXISTING_OPENAI"
     echo "   Using existing: $OPENAI_SERVICE"
@@ -525,7 +528,8 @@ az provider register --namespace Microsoft.DocumentDB || true
 echo "🗄️  Checking for existing Cosmos DB account..."
 
 # Check if any Cosmos DB account already exists in the resource group
-if EXISTING_COSMOS=$(find_existing_resource "cosmos"); then
+EXISTING_COSMOS=$(find_existing_resource "cosmos")
+if [ -n "$EXISTING_COSMOS" ] && [ "$EXISTING_COSMOS" != "" ]; then
     echo "✅ Found existing Cosmos DB account '$EXISTING_COSMOS' - skipping creation"
     export COSMOS_ACCOUNT="$EXISTING_COSMOS"
     echo "   Using existing: $COSMOS_ACCOUNT"
@@ -657,7 +661,8 @@ echo "==============================================="
 echo "🖥️  Checking for existing App Service Plan..."
 
 # Check if any App Service Plan already exists in the resource group
-if EXISTING_PLAN=$(find_existing_resource "appplan"); then
+EXISTING_PLAN=$(find_existing_resource "appplan")
+if [ -n "$EXISTING_PLAN" ] && [ "$EXISTING_PLAN" != "" ]; then
     echo "✅ Found existing App Service Plan '$EXISTING_PLAN' - skipping creation"
     export APP_SERVICE_PLAN="$EXISTING_PLAN"
     echo "   Using existing: $APP_SERVICE_PLAN"
@@ -738,7 +743,8 @@ fi
 echo "🔧 Checking for existing Backend Web App..."
 
 # Check if any Python backend web app already exists in the resource group
-if EXISTING_BACKEND=$(find_existing_resource "webapp-backend"); then
+EXISTING_BACKEND=$(find_existing_resource "webapp-backend")
+if [ -n "$EXISTING_BACKEND" ] && [ "$EXISTING_BACKEND" != "" ]; then
     echo "✅ Found existing Backend Web App '$EXISTING_BACKEND' - skipping creation"
     export BACKEND_APP_NAME="$EXISTING_BACKEND"
     echo "   Using existing: $BACKEND_APP_NAME"
@@ -794,7 +800,8 @@ fi
 echo "🎨 Checking for existing Frontend Web App..."
 
 # Check if any Node.js frontend web app already exists in the resource group
-if EXISTING_FRONTEND=$(find_existing_resource "webapp-frontend"); then
+EXISTING_FRONTEND=$(find_existing_resource "webapp-frontend")
+if [ -n "$EXISTING_FRONTEND" ] && [ "$EXISTING_FRONTEND" != "" ]; then
     echo "✅ Found existing Frontend Web App '$EXISTING_FRONTEND' - skipping creation"
     export FRONTEND_APP_NAME="$EXISTING_FRONTEND"
     echo "   Using existing: $FRONTEND_APP_NAME"
