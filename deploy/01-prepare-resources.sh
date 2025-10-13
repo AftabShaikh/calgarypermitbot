@@ -305,7 +305,7 @@ az provider register --namespace Microsoft.CognitiveServices || true
 echo "🧠 Creating Azure OpenAI Service..."
 echo "   Name: $OPENAI_SERVICE"
 
-# Function to create OpenAI service with retry logic
+# Function to create OpenAI service with retry logic and quota handling
 create_openai_service() {
     local service_name="$1"
     local max_attempts=3
@@ -315,35 +315,45 @@ create_openai_service() {
     while [ $attempt -le $max_attempts ]; do
         echo "   Attempt $attempt/$max_attempts: Creating OpenAI service '$service_name'..."
         
-        if az cognitiveservices account create \
+        ERROR_OUTPUT=$(az cognitiveservices account create \
             --name "$service_name" \
             --resource-group "$RESOURCE_GROUP" \
             --location "$LOCATION" \
             --kind OpenAI \
-            --sku S0 2>/dev/null; then
+            --sku S0 2>&1 || true)
+        
+        if echo "$ERROR_OUTPUT" | grep -q "SpecialFeatureOrQuotaIdRequired\|QuotaId.*required"; then
+            echo "   ⚠️  Azure OpenAI access not available for this subscription"
+            echo "   💡 This requires special approval from Microsoft"
+            echo "   📋 To request access:"
+            echo "      1. Visit: https://aka.ms/oai/access"
+            echo "      2. Fill out the Azure OpenAI access request form"
+            echo "      3. Wait for approval (can take several days)"
+            echo ""
+            echo "   🔄 Continuing deployment without OpenAI service..."
+            echo "   📝 You can add OpenAI service later once access is approved"
             
+            # Set a flag to indicate OpenAI is not available
+            export OPENAI_UNAVAILABLE=true
+            export OPENAI_SERVICE=""
+            return 2  # Special return code for quota issue
+            
+        elif echo "$ERROR_OUTPUT" | grep -q "already exists\|AlreadyExists"; then
+            echo "   ⚠️  Service '$service_name' already exists, trying with different name..."
+            service_name="${OPENAI_SERVICE%%-*}-openai-$(date +%s | tail -c 8)"
+            echo "   🔄 New name: $service_name"
+            
+        elif echo "$ERROR_OUTPUT" | grep -q -v "ERROR\|error"; then
             echo "✅ OpenAI Service creation initiated successfully"
             export OPENAI_SERVICE="$service_name"
             return 0
-        else
-            ERROR_OUTPUT=$(az cognitiveservices account create \
-                --name "$service_name" \
-                --resource-group "$RESOURCE_GROUP" \
-                --location "$LOCATION" \
-                --kind OpenAI \
-                --sku S0 2>&1 || true)
             
-            if echo "$ERROR_OUTPUT" | grep -q "already exists\|AlreadyExists"; then
-                echo "   ⚠️  Service '$service_name' already exists, trying with different name..."
-                service_name="${OPENAI_SERVICE%%-*}-openai-$(date +%s | tail -c 8)"
-                echo "   🔄 New name: $service_name"
-            else
-                echo "   ❌ Error: $ERROR_OUTPUT"
-                if [ $attempt -eq $max_attempts ]; then
-                    return 1
-                fi
-                sleep $wait_time
+        else
+            echo "   ❌ Error: $ERROR_OUTPUT"
+            if [ $attempt -eq $max_attempts ]; then
+                return 1
             fi
+            sleep $wait_time
         fi
         
         attempt=$((attempt + 1))
@@ -352,8 +362,10 @@ create_openai_service() {
     return 1
 }
 
-if create_openai_service "$OPENAI_SERVICE"; then
-    
+OPENAI_RESULT=$(create_openai_service "$OPENAI_SERVICE")
+OPENAI_EXIT_CODE=$?
+
+if [ $OPENAI_EXIT_CODE -eq 0 ]; then
     echo "✅ OpenAI Service creation initiated"
     
     # Wait for OpenAI Service to be ready
@@ -386,13 +398,21 @@ if create_openai_service "$OPENAI_SERVICE"; then
         echo "❌ Timeout waiting for OpenAI Service creation (${TIMEOUT}s)"
         exit 1
     fi
+    
+    # Step 6: Deploy OpenAI Models (wait for each model)
+    echo "📚 Deploying OpenAI models..."
+    DEPLOY_MODELS=true
+    
+elif [ $OPENAI_EXIT_CODE -eq 2 ]; then
+    echo "⚠️  Skipping OpenAI model deployment - service not available"
+    DEPLOY_MODELS=false
 else
     echo "❌ Failed to create OpenAI Service"
     exit 1
 fi
 
-# Step 6: Deploy OpenAI Models (wait for each model)
-echo "📚 Deploying OpenAI models..."
+# Deploy models only if OpenAI service is available
+if [ "$DEPLOY_MODELS" = "true" ] && [ -n "$OPENAI_SERVICE" ]; then
 
 # Deploy GPT-4o-mini model
 echo "   Deploying gpt-4o-mini model..."
@@ -426,6 +446,11 @@ if az cognitiveservices account deployment create \
 else
     echo "❌ Failed to deploy text-embedding-3-large model"
     exit 1
+fi
+
+else
+    echo "📋 OpenAI models skipped - service not available"
+    echo "   You can deploy models later once OpenAI access is approved"
 fi
 
 # Step 7: Register Cosmos DB provider and create Cosmos DB
@@ -1150,12 +1175,20 @@ echo "⚙️  Configuring backend app settings..."
 echo "   Getting service endpoints..."
 STORAGE_CONNECTION=$(az storage account show-connection-string --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query connectionString -o tsv)
 SEARCH_ENDPOINT=$(az search service show --name $SEARCH_SERVICE --resource-group $RESOURCE_GROUP --query hostName -o tsv)
-OPENAI_ENDPOINT=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query properties.endpoint -o tsv)
+
+# Get OpenAI endpoint only if service exists
+if [ -n "$OPENAI_SERVICE" ] && [ "$OPENAI_UNAVAILABLE" != "true" ]; then
+    OPENAI_ENDPOINT=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query properties.endpoint -o tsv)
+    echo "   OpenAI Endpoint: $OPENAI_ENDPOINT"
+else
+    OPENAI_ENDPOINT=""
+    echo "   OpenAI Endpoint: [Not available - requires access approval]"
+fi
+
 COSMOS_ENDPOINT=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query documentEndpoint -o tsv)
 
 echo "   Storage Connection: [hidden for security]"
 echo "   Search Endpoint: https://$SEARCH_ENDPOINT"
-echo "   OpenAI Endpoint: $OPENAI_ENDPOINT"
 echo "   Cosmos Endpoint: $COSMOS_ENDPOINT"
 
 # Configure app settings
@@ -1217,8 +1250,24 @@ echo "✅ Backend App: https://$BACKEND_APP_NAME.azurewebsites.net"
 echo "✅ Frontend App: https://$FRONTEND_APP_NAME.azurewebsites.net"
 echo "✅ Storage Account: $STORAGE_ACCOUNT"
 echo "✅ Search Service: $SEARCH_SERVICE"
-echo "✅ OpenAI Service: $OPENAI_SERVICE"
+
+if [ -n "$OPENAI_SERVICE" ] && [ "$OPENAI_UNAVAILABLE" != "true" ]; then
+    echo "✅ OpenAI Service: $OPENAI_SERVICE"
+else
+    echo "⚠️  OpenAI Service: Not available (requires access approval)"
+    echo "   📋 To request access: https://aka.ms/oai/access"
+fi
+
 echo "✅ Cosmos DB: $COSMOS_ACCOUNT"
 echo ""
 echo "📋 Configuration saved to: /tmp/deployment-config.env"
+
+if [ "$OPENAI_UNAVAILABLE" = "true" ]; then
+    echo ""
+    echo "⚠️  IMPORTANT: OpenAI service is not available"
+    echo "   The application may have limited AI functionality until OpenAI access is approved"
+    echo "   You can still proceed with deployment using other Azure services"
+    echo ""
+fi
+
 echo "🚀 Ready for deployment! Run ./02-deploy-app.sh next."
