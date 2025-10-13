@@ -98,7 +98,7 @@ if [ $RG_EXIT_CODE -eq 0 ]; then
     COUNTER=0
     
     while [ $COUNTER -lt $TIMEOUT ]; do
-        if az group show --name $RESOURCE_GROUP --query "properties.provisioningState" -o tsv 2>/dev/null | grep -q "Succeeded"; then
+        if az group show --name $RESOURCE_GROUP --query "properties.provisioningState" -o tsv 2>/dev/null | grep -qi "succeeded"; then
             echo "✅ Resource group is ready (took ${COUNTER}s)"
             break
         fi
@@ -145,10 +145,10 @@ if az storage account create \
         
         echo "   🔍 Storage status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Succeeded" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "succeeded" ]; then
             echo "✅ Storage Account is ready (took ${COUNTER}s)"
             break
-        elif [ "$STATUS" = "Failed" ]; then
+        elif [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "failed" ]; then
             echo "❌ Storage Account creation failed"
             exit 1
         elif [ "$STATUS" = "NotFound" ]; then
@@ -227,7 +227,37 @@ create_search_service() {
             
             echo "✅ AI Search Service creation initiated successfully"
             export SEARCH_SERVICE="$service_name"
-            return 0
+            
+            # Wait for the service to be ready
+            echo "⏳ Waiting for AI Search Service to be ready..."
+            local status_timeout=300  # 5 minutes max
+            local status_counter=0
+            
+            while [ $status_counter -lt $status_timeout ]; do
+                local status=$(az search service show --name "$service_name" --resource-group "$RESOURCE_GROUP" --query "provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+                
+                echo "   🔍 Status: '$status' (${status_counter}s elapsed)"
+                
+                # Convert status to lowercase for comparison (Azure sometimes returns different cases)
+                status_lower=$(echo "$status" | tr '[:upper:]' '[:lower:]')
+                
+                if [ "$status_lower" = "succeeded" ] || [ "$status_lower" = "running" ]; then
+                    echo "✅ AI Search Service is ready (took ${status_counter}s)"
+                    return 0
+                elif [ "$status_lower" = "failed" ]; then
+                    echo "❌ AI Search Service provisioning failed"
+                    return 1
+                elif [ "$status" = "NotFound" ] && [ $status_counter -gt 60 ]; then
+                    echo "❌ Service not found after creation - something went wrong"
+                    return 1
+                fi
+                
+                sleep 10
+                status_counter=$((status_counter + 10))
+            done
+            
+            echo "❌ Timeout waiting for service to be ready"
+            return 1
         else
             # Check if it's a ServiceDeleting error or name conflict
             ERROR_OUTPUT=$(az search service create \
@@ -262,39 +292,7 @@ create_search_service() {
 
 # Call the function with retry logic
 if create_search_service "$SEARCH_SERVICE"; then
-    
-    echo "✅ AI Search Service creation initiated"
-    
-    # Wait for AI Search to be ready
-    echo "⏳ Checking AI Search Service status..."
-    TIMEOUT=300  # 5 minutes max
-    COUNTER=0
-    
-    while [ $COUNTER -lt $TIMEOUT ]; do
-        STATUS=$(az search service show --name $SEARCH_SERVICE --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null || echo "NotFound")
-        
-        echo "   🔍 Search status: '$STATUS' (${COUNTER}s elapsed)"
-        
-        if [ "$STATUS" = "Succeeded" ]; then
-            echo "✅ AI Search Service is ready (took ${COUNTER}s)"
-            break
-        elif [ "$STATUS" = "Failed" ]; then
-            echo "❌ AI Search Service creation failed"
-            exit 1
-        elif [ "$STATUS" = "NotFound" ]; then
-            echo "   ⏳ AI Search Service not found yet, still creating..."
-        else
-            echo "   🔍 Status: $STATUS - continuing to wait..."
-        fi
-        
-        sleep 15
-        COUNTER=$((COUNTER + 15))
-    done
-    
-    if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "❌ Timeout waiting for AI Search Service creation (${TIMEOUT}s)"
-        exit 1
-    fi
+    echo "✅ AI Search Service creation and provisioning completed"
 else
     echo "❌ Failed to create AI Search Service"
     exit 1
@@ -368,10 +366,10 @@ if create_openai_service "$OPENAI_SERVICE"; then
         
         echo "   🔍 OpenAI status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Succeeded" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "succeeded" ]; then
             echo "✅ OpenAI Service is ready (took ${COUNTER}s)"
             break
-        elif [ "$STATUS" = "Failed" ]; then
+        elif [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "failed" ]; then
             echo "❌ OpenAI Service creation failed"
             exit 1
         elif [ "$STATUS" = "NotFound" ]; then
@@ -504,10 +502,10 @@ if create_cosmos_db "$COSMOS_ACCOUNT"; then
         
         echo "   🔍 Cosmos status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Succeeded" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "succeeded" ]; then
             echo "✅ Cosmos DB is ready (took ${COUNTER}s)"
             break
-        elif [ "$STATUS" = "Failed" ]; then
+        elif [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "failed" ]; then
             echo "❌ Cosmos DB creation failed"
             exit 1
         elif [ "$STATUS" = "NotFound" ]; then
@@ -588,10 +586,10 @@ if [ $ASP_EXIT_CODE -eq 0 ]; then
         
         echo "   🔍 Current status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Succeeded" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "succeeded" ]; then
             echo "✅ App Service Plan is ready (took ${COUNTER}s)"
             break
-        elif [ "$STATUS" = "Failed" ]; then
+        elif [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "failed" ]; then
             echo "❌ App Service Plan creation failed during provisioning"
             az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP 2>/dev/null || echo "Could not get plan details"
             exit 1
@@ -654,7 +652,7 @@ if az webapp create \
         
         echo "   🔍 Backend app status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Running" ] || [ "$STATUS" = "Stopped" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "running" ] || [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "stopped" ]; then
             echo "✅ Backend Web App is ready (took ${COUNTER}s, status: $STATUS)"
             break
         elif [ "$STATUS" = "NotFound" ]; then
@@ -697,7 +695,7 @@ if az webapp create \
         
         echo "   🔍 Frontend app status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Running" ] || [ "$STATUS" = "Stopped" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "running" ] || [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "stopped" ]; then
             echo "✅ Frontend Web App is ready (took ${COUNTER}s, status: $STATUS)"
             break
         elif [ "$STATUS" = "NotFound" ]; then
@@ -831,13 +829,14 @@ if [ $FRONTEND_EXIT_CODE -eq 0 ]; then
     
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az webapp show --name $FRONTEND_APP_NAME --resource-group $RESOURCE_GROUP --query "state" -o tsv 2>/dev/null)
+        STATUS_LOWER=$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')
         
-        case "$STATUS" in
-            "Running")
+        case "$STATUS_LOWER" in
+            "running")
                 echo "✅ Frontend Web App is ready (took ${COUNTER}s)"
                 break
                 ;;
-            "Stopped"|"Failed")
+            "stopped"|"failed")
                 echo "⚠️  Frontend Web App status: $STATUS - this may be expected initially"
                 break
                 ;;
@@ -891,10 +890,10 @@ if az storage account create \
         
         echo "   🔍 Storage status: '$STATUS' (${COUNTER}s elapsed)"
         
-        if [ "$STATUS" = "Succeeded" ]; then
+        if [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "succeeded" ]; then
             echo "✅ Storage Account is ready (took ${COUNTER}s)"
             break
-        elif [ "$STATUS" = "Failed" ]; then
+        elif [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "failed" ]; then
             echo "❌ Storage Account creation failed"
             exit 1
         elif [ "$STATUS" = "NotFound" ]; then
@@ -1020,17 +1019,18 @@ if az cosmosdb create \
     
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
+        STATUS_LOWER=$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')
         
-        case "$STATUS" in
-            "Succeeded")
+        case "$STATUS_LOWER" in
+            "succeeded")
                 echo "✅ Cosmos DB is ready (took ${COUNTER}s)"
                 break
                 ;;
-            "Failed")
+            "failed")
                 echo "❌ Cosmos DB creation failed"
                 exit 1
                 ;;
-            "Creating"|"InProgress")
+            "creating"|"inprogress")
                 echo "   🗄️  Status: $STATUS (${COUNTER}s elapsed) - Cosmos DB takes time..."
                 ;;
             *)
