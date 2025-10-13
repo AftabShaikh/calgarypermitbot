@@ -241,7 +241,26 @@ The deployment automatically uploads all files from the `data/` folder to the Az
 
 ### Common Issues
 
-1. **Deployment Timeout**
+1. **"ServiceDeleting" or Naming Conflict Errors** (NEW)
+   ```bash
+   # Quick conflict resolution
+   ./deploy/cleanup-conflicts.sh --resolve-conflicts
+   
+   # Check what exists without deleting
+   ./deploy/cleanup-conflicts.sh --dry-run
+   
+   # Force cleanup all resources (CAREFUL!)
+   ./deploy/cleanup-conflicts.sh --force
+   ```
+   
+   **What causes this**: Azure services being deleted in background operations, or previous deployments with same names.
+   
+   **Solutions**:
+   - Wait 10-15 minutes for background operations to complete
+   - Use the cleanup script to resolve conflicts  
+   - The deployment now uses timestamp-based naming to avoid conflicts
+
+2. **Deployment Timeout**
    - Increase timeout in deployment scripts
    - Check Azure service availability in West US 2
 

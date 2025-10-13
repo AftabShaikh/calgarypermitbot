@@ -204,15 +204,64 @@ else
     exit 1
 fi
 
-# Step 4: Create Azure AI Search Service
+# Step 4: Create Azure AI Search Service with retry logic
 echo "🔍 Creating Azure AI Search Service..."
 echo "   Name: $SEARCH_SERVICE"
 
-if az search service create \
-    --name $SEARCH_SERVICE \
-    --resource-group $RESOURCE_GROUP \
-    --location $LOCATION \
-    --sku basic; then
+# Function to create search service with retry logic
+create_search_service() {
+    local service_name="$1"
+    local max_attempts=5
+    local attempt=1
+    local wait_time=30
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "   Attempt $attempt/$max_attempts: Creating search service '$service_name'..."
+        
+        # Try to create the search service
+        if az search service create \
+            --name "$service_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --sku basic 2>/dev/null; then
+            
+            echo "✅ AI Search Service creation initiated successfully"
+            export SEARCH_SERVICE="$service_name"
+            return 0
+        else
+            # Check if it's a ServiceDeleting error or name conflict
+            ERROR_OUTPUT=$(az search service create \
+                --name "$service_name" \
+                --resource-group "$RESOURCE_GROUP" \
+                --location "$LOCATION" \
+                --sku basic 2>&1 || true)
+            
+            if echo "$ERROR_OUTPUT" | grep -q "ServiceDeleting\|background operation"; then
+                echo "   ⏳ Service '$service_name' is being deleted in background, waiting ${wait_time}s..."
+                sleep $wait_time
+                wait_time=$((wait_time * 2))  # Exponential backoff
+            elif echo "$ERROR_OUTPUT" | grep -q "already exists\|AlreadyExists"; then
+                echo "   ⚠️  Service '$service_name' already exists, trying with different name..."
+                service_name="${SEARCH_SERVICE%%-*}-search-$(date +%s | tail -c 8)"
+                echo "   🔄 New name: $service_name"
+            else
+                echo "   ❌ Unexpected error: $ERROR_OUTPUT"
+                if [ $attempt -eq $max_attempts ]; then
+                    return 1
+                fi
+                sleep $wait_time
+            fi
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    echo "❌ Failed to create search service after $max_attempts attempts"
+    return 1
+}
+
+# Call the function with retry logic
+if create_search_service "$SEARCH_SERVICE"; then
     
     echo "✅ AI Search Service creation initiated"
     
@@ -258,12 +307,54 @@ az provider register --namespace Microsoft.CognitiveServices || true
 echo "🧠 Creating Azure OpenAI Service..."
 echo "   Name: $OPENAI_SERVICE"
 
-if az cognitiveservices account create \
-    --name $OPENAI_SERVICE \
-    --resource-group $RESOURCE_GROUP \
-    --location $LOCATION \
-    --kind OpenAI \
-    --sku S0; then
+# Function to create OpenAI service with retry logic
+create_openai_service() {
+    local service_name="$1"
+    local max_attempts=3
+    local attempt=1
+    local wait_time=20
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "   Attempt $attempt/$max_attempts: Creating OpenAI service '$service_name'..."
+        
+        if az cognitiveservices account create \
+            --name "$service_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --location "$LOCATION" \
+            --kind OpenAI \
+            --sku S0 2>/dev/null; then
+            
+            echo "✅ OpenAI Service creation initiated successfully"
+            export OPENAI_SERVICE="$service_name"
+            return 0
+        else
+            ERROR_OUTPUT=$(az cognitiveservices account create \
+                --name "$service_name" \
+                --resource-group "$RESOURCE_GROUP" \
+                --location "$LOCATION" \
+                --kind OpenAI \
+                --sku S0 2>&1 || true)
+            
+            if echo "$ERROR_OUTPUT" | grep -q "already exists\|AlreadyExists"; then
+                echo "   ⚠️  Service '$service_name' already exists, trying with different name..."
+                service_name="${OPENAI_SERVICE%%-*}-openai-$(date +%s | tail -c 8)"
+                echo "   🔄 New name: $service_name"
+            else
+                echo "   ❌ Error: $ERROR_OUTPUT"
+                if [ $attempt -eq $max_attempts ]; then
+                    return 1
+                fi
+                sleep $wait_time
+            fi
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    return 1
+}
+
+if create_openai_service "$OPENAI_SERVICE"; then
     
     echo "✅ OpenAI Service creation initiated"
     
@@ -347,15 +438,59 @@ echo "🗄️  Creating Cosmos DB account..."
 echo "   Name: $COSMOS_ACCOUNT"
 echo "   This may take several minutes..."
 
-if az cosmosdb create \
-    --name $COSMOS_ACCOUNT \
-    --resource-group $RESOURCE_GROUP \
-    --kind GlobalDocumentDB \
-    --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=False \
-    --default-consistency-level Session \
-    --enable-automatic-failover false \
-    --enable-multiple-write-locations false \
-    --capabilities EnableServerless; then
+# Function to create Cosmos DB with retry logic
+create_cosmos_db() {
+    local account_name="$1"
+    local max_attempts=3
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "   Attempt $attempt/$max_attempts: Creating Cosmos DB '$account_name'..."
+        
+        if az cosmosdb create \
+            --name "$account_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --kind GlobalDocumentDB \
+            --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=False \
+            --default-consistency-level Session \
+            --enable-automatic-failover false \
+            --enable-multiple-write-locations false \
+            --capabilities EnableServerless 2>/dev/null; then
+            
+            echo "✅ Cosmos DB creation initiated successfully"
+            export COSMOS_ACCOUNT="$account_name"
+            return 0
+        else
+            ERROR_OUTPUT=$(az cosmosdb create \
+                --name "$account_name" \
+                --resource-group "$RESOURCE_GROUP" \
+                --kind GlobalDocumentDB \
+                --locations regionName="$LOCATION" failoverPriority=0 isZoneRedundant=False \
+                --default-consistency-level Session \
+                --enable-automatic-failover false \
+                --enable-multiple-write-locations false \
+                --capabilities EnableServerless 2>&1 || true)
+            
+            if echo "$ERROR_OUTPUT" | grep -q "already exists\|AlreadyExists"; then
+                echo "   ⚠️  Account '$account_name' already exists, trying with different name..."
+                account_name="${COSMOS_ACCOUNT%%-*}-cosmos-$(date +%s | tail -c 8)"
+                echo "   🔄 New name: $account_name"
+            else
+                echo "   ❌ Error: $ERROR_OUTPUT"
+                if [ $attempt -eq $max_attempts ]; then
+                    return 1
+                fi
+                sleep 30
+            fi
+        fi
+        
+        attempt=$((attempt + 1))
+    done
+    
+    return 1
+}
+
+if create_cosmos_db "$COSMOS_ACCOUNT"; then
     
     echo "✅ Cosmos DB creation initiated"
     

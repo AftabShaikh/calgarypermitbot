@@ -16,15 +16,16 @@ The Calgary Permit Bot deployment process has been streamlined with the followin
 
 ### 📁 New Files Created
 
-1. **`deploy/config.sh`** - Centralized configuration file
-2. **`deploy/quick-deploy.sh`** - One-step deployment script with options
-3. **`.github/workflows/deploy.yml`** - GitHub Actions workflow for CI/CD
-4. **`deploy/validate.sh`** - Pre-deployment validation script
-5. **Enhanced `deploy/README.md`** - Comprehensive deployment guide
+1. **`deploy/config.sh`** - Centralized configuration file with timestamp-based naming
+2. **`deploy/quick-deploy.sh`** - One-step deployment script with conflict detection
+3. **`deploy/cleanup-conflicts.sh`** - Resource cleanup and conflict resolution
+4. **`.github/workflows/deploy.yml`** - GitHub Actions workflow for CI/CD
+5. **`deploy/validate.sh`** - Pre-deployment validation script
+6. **Enhanced `deploy/README.md`** - Comprehensive deployment guide with troubleshooting
 
 ### 🔧 Enhanced Files
 
-1. **`deploy/01-prepare-resources.sh`** - Updated to use B1 tier and proper configuration
+1. **`deploy/01-prepare-resources.sh`** - Updated with B1 tier, retry logic, and exponential backoff
 2. **`deploy/02-deploy-app.sh`** - Enhanced with data upload and improved deployment logic
 
 ### 🚀 Deployment Options
@@ -108,6 +109,16 @@ All scripts are designed for Azure Cloud Shell:
 - ✅ Clear progress indicators and status messages
 - ✅ Configuration persistence across script runs
 - ✅ Health checks and validation
+
+### 🔧 Conflict Resolution & Retry Logic
+
+Enhanced deployment with robust error handling:
+- ✅ **Exponential backoff** for "ServiceDeleting" errors
+- ✅ **Timestamp-based naming** to avoid conflicts
+- ✅ **Automatic retry** with alternative resource names
+- ✅ **Dedicated cleanup script** for conflict resolution
+- ✅ **Pre-deployment checks** for existing resources
+- ✅ **Smart error detection** and user guidance
 
 ### 🎛️ Script Options
 

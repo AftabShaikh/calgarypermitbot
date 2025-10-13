@@ -81,6 +81,30 @@ if ! az account show > /dev/null 2>&1; then
     exit 1
 fi
 
+# Check for existing resources that might cause conflicts
+echo "🔍 Checking for potential naming conflicts..."
+if az group exists --name "$RESOURCE_GROUP" | grep -q "true"; then
+    echo "⚠️  Resource group '$RESOURCE_GROUP' already exists"
+    
+    # Check for services that might be in deleting state
+    EXISTING_SEARCH=$(az search service list --resource-group "$RESOURCE_GROUP" --query "[?contains(name, 'calgarypermitbot-search')].name | [0]" -o tsv 2>/dev/null || echo "")
+    if [ -n "$EXISTING_SEARCH" ]; then
+        echo "⚠️  AI Search service '$EXISTING_SEARCH' already exists"
+        echo ""
+        echo "💡 If you're getting 'ServiceDeleting' errors, you have options:"
+        echo "   1. Run: ./deploy/cleanup-conflicts.sh --resolve-conflicts"
+        echo "   2. Wait 10-15 minutes for background operations to complete"
+        echo "   3. Use a different resource group name in config.sh"
+        echo ""
+        read -p "Continue anyway? The script will use retry logic with exponential backoff (y/N): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Deployment cancelled. Consider running the cleanup script first."
+            exit 0
+        fi
+    fi
+fi
+
 echo "✅ Prerequisites check passed"
 echo ""
 

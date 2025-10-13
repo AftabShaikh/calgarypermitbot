@@ -17,15 +17,15 @@ export STORAGE_ACCOUNT="calgarypermitbotstg$(date +%s | tail -c 6)"
 export STORAGE_CONTAINER="content"
 
 # Azure AI Search Configuration
-export SEARCH_SERVICE="calgarypermitbot-search"
+export SEARCH_SERVICE="calgarypermitbot-search-$(date +%s | tail -c 6)"
 export SEARCH_SKU="basic"
 
 # Azure OpenAI Configuration
-export OPENAI_SERVICE="calgarypermitbot-openai"
+export OPENAI_SERVICE="calgarypermitbot-openai-$(date +%s | tail -c 6)"
 export OPENAI_SKU="S0"
 
 # Cosmos DB Configuration
-export COSMOS_ACCOUNT="calgarypermitbot-cosmos"
+export COSMOS_ACCOUNT="calgarypermitbot-cosmos-$(date +%s | tail -c 6)"
 export COSMOS_DATABASE="chathistory"
 export COSMOS_CONTAINER="chatcontainer"
 
