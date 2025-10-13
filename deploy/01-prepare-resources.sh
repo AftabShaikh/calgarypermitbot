@@ -79,22 +79,23 @@ RG_EXIT_CODE=$?
 if [ $RG_EXIT_CODE -eq 0 ]; then
     echo "✅ Resource group created successfully"
     
-    # Wait for resource group to be fully ready
-    echo "⏳ Waiting for resource group to be fully ready..."
-    TIMEOUT=60
+    # Quick check that resource group is ready (usually immediate)
+    echo "⏳ Verifying resource group..."
+    TIMEOUT=20  # 20 seconds max for resource group
     COUNTER=0
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         if az group show --name $RESOURCE_GROUP --query "properties.provisioningState" -o tsv 2>/dev/null | grep -q "Succeeded"; then
-            echo "✅ Resource group is ready"
+            echo "✅ Resource group is ready (took ${COUNTER}s)"
             break
         fi
-        echo "   Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 5
-        COUNTER=$((COUNTER + 5))
+        echo "   📦 Verifying resource group... (${COUNTER}s elapsed)"
+        sleep 2
+        COUNTER=$((COUNTER + 2))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "⚠️  Timeout waiting for resource group, but continuing..."
+        echo "⚠️  Resource group verification timed out after ${TIMEOUT}s, but continuing..."
     fi
 else
     echo "❌ Failed to create resource group"
@@ -123,29 +124,44 @@ ASP_EXIT_CODE=$?
 if [ $ASP_EXIT_CODE -eq 0 ]; then
     echo "✅ App Service Plan creation initiated"
     
-    # Wait for App Service Plan to be fully ready
-    echo "⏳ Waiting for App Service Plan to be ready..."
-    TIMEOUT=300  # 5 minutes
+    # Wait for App Service Plan to be ready (smart waiting)
+    echo "⏳ Checking App Service Plan status..."
+    TIMEOUT=300  # 5 minutes max
     COUNTER=0
+    WAIT_INTERVAL=5  # Start with 5 second checks
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
-        if [ "$STATUS" = "Succeeded" ]; then
-            echo "✅ App Service Plan is ready"
-            break
-        elif [ "$STATUS" = "Failed" ]; then
-            echo "❌ App Service Plan creation failed during provisioning"
-            # Get detailed error information
-            az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "{Status:provisioningState,Error:error}" -o json || true
-            exit 1
+        
+        case "$STATUS" in
+            "Succeeded")
+                echo "✅ App Service Plan is ready (took ${COUNTER}s)"
+                break
+                ;;
+            "Failed")
+                echo "❌ App Service Plan creation failed during provisioning"
+                az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "{Status:provisioningState,Error:error}" -o json || true
+                exit 1
+                ;;
+            "Creating"|"InProgress"|"Accepted")
+                echo "   📋 Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+            *)
+                echo "   ⏳ Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+        esac
+        
+        sleep $WAIT_INTERVAL
+        COUNTER=$((COUNTER + WAIT_INTERVAL))
+        
+        # Increase wait interval as time goes on (exponential backoff)
+        if [ $COUNTER -gt 60 ] && [ $WAIT_INTERVAL -lt 15 ]; then
+            WAIT_INTERVAL=15  # Switch to 15 second checks after 1 minute
         fi
-        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 10
-        COUNTER=$((COUNTER + 10))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "❌ Timeout waiting for App Service Plan creation"
-        # Show current status
+        echo "❌ Timeout waiting for App Service Plan creation (${TIMEOUT}s)"
         az appservice plan show --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --query "{Status:provisioningState,Sku:sku}" -o json || true
         exit 1
     fi
@@ -185,23 +201,40 @@ BACKEND_EXIT_CODE=$?
 if [ $BACKEND_EXIT_CODE -eq 0 ]; then
     echo "✅ Backend Web App creation initiated"
     
-    # Wait for backend web app to be ready
-    echo "⏳ Waiting for Backend Web App to be ready..."
-    TIMEOUT=300  # 5 minutes
+    # Wait for backend web app to be ready (smart waiting)
+    echo "⏳ Checking Backend Web App status..."
+    TIMEOUT=180  # 3 minutes max for web apps
     COUNTER=0
+    WAIT_INTERVAL=3  # Start with 3 second checks for web apps
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az webapp show --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --query "state" -o tsv 2>/dev/null)
-        if [ "$STATUS" = "Running" ]; then
-            echo "✅ Backend Web App is ready"
-            break
+        
+        case "$STATUS" in
+            "Running")
+                echo "✅ Backend Web App is ready (took ${COUNTER}s)"
+                break
+                ;;
+            "Stopped"|"Failed")
+                echo "⚠️  Backend Web App status: $STATUS - this may be expected initially"
+                break
+                ;;
+            *)
+                echo "   📱 Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+        esac
+        
+        sleep $WAIT_INTERVAL
+        COUNTER=$((COUNTER + WAIT_INTERVAL))
+        
+        # Increase wait interval after initial checks
+        if [ $COUNTER -gt 30 ] && [ $WAIT_INTERVAL -lt 10 ]; then
+            WAIT_INTERVAL=10  # Switch to 10 second checks after 30s
         fi
-        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 10
-        COUNTER=$((COUNTER + 10))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "⚠️  Timeout waiting for Backend Web App, but continuing..."
+        echo "⚠️  Backend Web App not running after ${TIMEOUT}s, but continuing (will be configured later)"
     fi
 else
     echo "❌ Failed to create Backend Web App"
@@ -222,23 +255,32 @@ IDENTITY_EXIT_CODE=$?
 if [ $IDENTITY_EXIT_CODE -eq 0 ]; then
     echo "✅ Managed identity assignment initiated"
     
-    # Wait for managed identity to be ready
-    echo "⏳ Waiting for managed identity to be ready..."
-    TIMEOUT=120  # 2 minutes
+    # Wait for managed identity to be ready (smart waiting)
+    echo "⏳ Checking managed identity status..."
+    TIMEOUT=60  # 1 minute max for identity
     COUNTER=0
+    WAIT_INTERVAL=2  # Start with 2 second checks for identity
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         PRINCIPAL_ID=$(az webapp identity show --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --query "principalId" -o tsv 2>/dev/null)
-        if [ -n "$PRINCIPAL_ID" ] && [ "$PRINCIPAL_ID" != "null" ]; then
-            echo "✅ Managed identity is ready (Principal ID: $PRINCIPAL_ID)"
+        
+        if [ -n "$PRINCIPAL_ID" ] && [ "$PRINCIPAL_ID" != "null" ] && [ "$PRINCIPAL_ID" != "" ]; then
+            echo "✅ Managed identity is ready (Principal ID: $PRINCIPAL_ID, took ${COUNTER}s)"
             break
         fi
-        echo "   Waiting for principal ID... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 5
-        COUNTER=$((COUNTER + 5))
+        
+        echo "   🔐 Waiting for principal ID... (${COUNTER}s elapsed)"
+        sleep $WAIT_INTERVAL
+        COUNTER=$((COUNTER + WAIT_INTERVAL))
+        
+        # Increase wait interval slightly after initial checks
+        if [ $COUNTER -gt 10 ] && [ $WAIT_INTERVAL -lt 5 ]; then
+            WAIT_INTERVAL=5
+        fi
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "⚠️  Timeout waiting for managed identity, but continuing..."
+        echo "⚠️  Managed identity not ready after ${TIMEOUT}s, but continuing..."
     fi
 else
     echo "❌ Failed to enable managed identity"
@@ -263,23 +305,40 @@ FRONTEND_EXIT_CODE=$?
 if [ $FRONTEND_EXIT_CODE -eq 0 ]; then
     echo "✅ Frontend Web App creation initiated"
     
-    # Wait for frontend web app to be ready
-    echo "⏳ Waiting for Frontend Web App to be ready..."
-    TIMEOUT=300  # 5 minutes
+    # Wait for frontend web app to be ready (smart waiting)
+    echo "⏳ Checking Frontend Web App status..."
+    TIMEOUT=180  # 3 minutes max for web apps
     COUNTER=0
+    WAIT_INTERVAL=3  # Start with 3 second checks
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az webapp show --name $FRONTEND_APP_NAME --resource-group $RESOURCE_GROUP --query "state" -o tsv 2>/dev/null)
-        if [ "$STATUS" = "Running" ]; then
-            echo "✅ Frontend Web App is ready"
-            break
+        
+        case "$STATUS" in
+            "Running")
+                echo "✅ Frontend Web App is ready (took ${COUNTER}s)"
+                break
+                ;;
+            "Stopped"|"Failed")
+                echo "⚠️  Frontend Web App status: $STATUS - this may be expected initially"
+                break
+                ;;
+            *)
+                echo "   🌐 Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+        esac
+        
+        sleep $WAIT_INTERVAL
+        COUNTER=$((COUNTER + WAIT_INTERVAL))
+        
+        # Increase wait interval after initial checks
+        if [ $COUNTER -gt 30 ] && [ $WAIT_INTERVAL -lt 10 ]; then
+            WAIT_INTERVAL=10
         fi
-        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 10
-        COUNTER=$((COUNTER + 10))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "⚠️  Timeout waiting for Frontend Web App, but continuing..."
+        echo "⚠️  Frontend Web App not running after ${TIMEOUT}s, but continuing (will be configured later)"
     fi
 else
     echo "❌ Failed to create Frontend Web App"
@@ -302,23 +361,43 @@ if az storage account create \
     
     echo "✅ Storage Account creation initiated"
     
-    # Wait for storage account to be ready
-    echo "⏳ Waiting for Storage Account to be ready..."
-    TIMEOUT=180  # 3 minutes
+    # Wait for storage account to be ready (smart waiting)
+    echo "⏳ Checking Storage Account status..."
+    TIMEOUT=120  # 2 minutes max
     COUNTER=0
+    WAIT_INTERVAL=3  # Start with 3 second checks
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az storage account show --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
-        if [ "$STATUS" = "Succeeded" ]; then
-            echo "✅ Storage Account is ready"
-            break
+        
+        case "$STATUS" in
+            "Succeeded")
+                echo "✅ Storage Account is ready (took ${COUNTER}s)"
+                break
+                ;;
+            "Failed")
+                echo "❌ Storage Account creation failed"
+                exit 1
+                ;;
+            "Creating"|"InProgress")
+                echo "   💾 Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+            *)
+                echo "   ⏳ Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+        esac
+        
+        sleep $WAIT_INTERVAL
+        COUNTER=$((COUNTER + WAIT_INTERVAL))
+        
+        # Increase wait interval for storage after initial checks
+        if [ $COUNTER -gt 15 ] && [ $WAIT_INTERVAL -lt 8 ]; then
+            WAIT_INTERVAL=8
         fi
-        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 10
-        COUNTER=$((COUNTER + 10))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "❌ Timeout waiting for Storage Account creation"
+        echo "❌ Timeout waiting for Storage Account creation (${TIMEOUT}s)"
         exit 1
     fi
 else
@@ -335,22 +414,24 @@ if az storage container create \
     
     echo "✅ Storage container created"
     
-    # Wait for container to be accessible
-    echo "⏳ Waiting for storage container to be ready..."
-    TIMEOUT=60
+    # Wait for container to be accessible (quick check)
+    echo "⏳ Verifying storage container access..."
+    TIMEOUT=30  # 30 seconds max for container
     COUNTER=0
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         if az storage container show --name content --account-name $STORAGE_ACCOUNT --auth-mode login > /dev/null 2>&1; then
-            echo "✅ Storage container is ready"
+            echo "✅ Storage container is accessible (took ${COUNTER}s)"
             break
         fi
-        echo "   Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 5
-        COUNTER=$((COUNTER + 5))
+        
+        echo "   📁 Checking container access... (${COUNTER}s elapsed)"
+        sleep 3
+        COUNTER=$((COUNTER + 3))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "⚠️  Timeout waiting for storage container, but continuing..."
+        echo "⚠️  Storage container access check timed out after ${TIMEOUT}s, but continuing..."
     fi
 else
     echo "❌ Failed to create storage container"
@@ -421,23 +502,45 @@ if az cosmosdb create \
     
     echo "✅ Cosmos DB creation initiated"
     
-    # Wait for Cosmos DB to be ready (this can take a while)
-    echo "⏳ Waiting for Cosmos DB to be ready (this may take 5-10 minutes)..."
-    TIMEOUT=600  # 10 minutes
+    # Wait for Cosmos DB to be ready (smart waiting with longer intervals)
+    echo "⏳ Checking Cosmos DB status (this may take several minutes)..."
+    TIMEOUT=600  # 10 minutes max
     COUNTER=0
+    WAIT_INTERVAL=10  # Start with 10 second checks for Cosmos DB
+    
     while [ $COUNTER -lt $TIMEOUT ]; do
         STATUS=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null)
-        if [ "$STATUS" = "Succeeded" ]; then
-            echo "✅ Cosmos DB is ready"
-            break
+        
+        case "$STATUS" in
+            "Succeeded")
+                echo "✅ Cosmos DB is ready (took ${COUNTER}s)"
+                break
+                ;;
+            "Failed")
+                echo "❌ Cosmos DB creation failed"
+                exit 1
+                ;;
+            "Creating"|"InProgress")
+                echo "   🗄️  Status: $STATUS (${COUNTER}s elapsed) - Cosmos DB takes time..."
+                ;;
+            *)
+                echo "   ⏳ Status: $STATUS (${COUNTER}s elapsed)"
+                ;;
+        esac
+        
+        sleep $WAIT_INTERVAL
+        COUNTER=$((COUNTER + WAIT_INTERVAL))
+        
+        # Increase wait interval for Cosmos DB as it's slow
+        if [ $COUNTER -gt 60 ] && [ $WAIT_INTERVAL -lt 30 ]; then
+            WAIT_INTERVAL=30  # Switch to 30 second checks after 1 minute
+        elif [ $COUNTER -gt 180 ] && [ $WAIT_INTERVAL -lt 45 ]; then
+            WAIT_INTERVAL=45  # Switch to 45 second checks after 3 minutes
         fi
-        echo "   Status: $STATUS - Waiting... (${COUNTER}s/${TIMEOUT}s)"
-        sleep 30
-        COUNTER=$((COUNTER + 30))
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "❌ Timeout waiting for Cosmos DB creation"
+        echo "❌ Timeout waiting for Cosmos DB creation (${TIMEOUT}s)"
         exit 1
     fi
 else
@@ -485,10 +588,11 @@ az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Cognitive Ser
 echo "🔑 Assigning Cosmos DB role..."
 az role assignment create --assignee $BACKEND_PRINCIPAL_ID --role "Cosmos DB Account Reader Role" --scope $COSMOS_ID
 
-# Wait for role assignments to propagate
-echo "⏳ Waiting for role assignments to propagate..."
-sleep 60
-echo "✅ Role assignments completed"
+# Wait for role assignments to propagate (reduced time)
+echo "⏳ Allowing time for role assignments to propagate..."
+echo "   💡 Role assignments may take a few minutes to fully propagate"
+sleep 30  # Reduced from 60 seconds
+echo "✅ Role assignments completed (may still be propagating in background)"
 
 # Step 13: Configure Backend App Settings
 echo "⚙️  Configuring backend app settings..."
