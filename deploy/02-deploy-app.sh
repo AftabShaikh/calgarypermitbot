@@ -351,24 +351,35 @@ EOF
         fi
     else
         DEPLOY_EXIT_CODE=$?
-        if [ $DEPLOY_EXIT_CODE -eq 124 ]; then
-            echo "❌ Backend deployment timed out after 10 minutes"
+        if [ $DEPLOY_EXIT_CODE -eq 124 ] || [ $DEPLOY_EXIT_CODE -eq 143 ]; then
+            if [ $DEPLOY_EXIT_CODE -eq 124 ]; then
+                echo "⚠️  Backend deployment timed out after 10 minutes"
+            else
+                echo "⚠️  Backend deployment was terminated (exit code 143)"
+            fi
+            echo "   The deployment is likely still completing in the background"
+            echo "   Continuing with frontend deployment..."
+            BACKEND_TIMEOUT=true
         else
             echo "❌ Backend deployment failed with exit code: $DEPLOY_EXIT_CODE"
+            echo "Please check the deployment logs for more details."
+            exit 1
         fi
-        echo "Please check the deployment logs for more details."
-        exit 1
     fi
     
-    # Wait for backend build and start
-    echo "⏳ Waiting for backend build and startup (this may take several minutes)..."
-    echo "   Press Ctrl+C to interrupt if needed..."
-    for i in {1..24}; do
-        sleep 5
-        if [ $((i % 6)) -eq 0 ]; then
-            echo "⏳ Still waiting... (${i}0 seconds elapsed)"
-        fi
-    done
+    # Wait for backend build and start (skip if timed out)
+    if [ "$BACKEND_TIMEOUT" != "true" ]; then
+        echo "⏳ Waiting for backend build and startup (this may take several minutes)..."
+        echo "   Press Ctrl+C to interrupt if needed..."
+        for i in {1..24}; do
+            sleep 5
+            if [ $((i % 6)) -eq 0 ]; then
+                echo "⏳ Still waiting... (${i}0 seconds elapsed)"
+            fi
+        done
+    else
+        echo "⏭️  Skipping additional wait due to timeout - continuing to frontend"
+    fi
     
     # Check if the build completed successfully
     echo "🔍 Checking deployment status..."
@@ -472,7 +483,7 @@ EOF
     "express": "^4.18.2"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=22.0.0"
   }
 }
 EOF
@@ -692,7 +703,7 @@ az webapp config appsettings set \
     --settings \
         BACKEND_URL="$BACKEND_URL" \
         NODE_ENV="production" \
-        WEBSITE_NODE_DEFAULT_VERSION="18-lts"
+        WEBSITE_NODE_DEFAULT_VERSION="22-lts"
 
 # Step 5: Run data preprocessing (create search index)
 echo "🔍 Setting up search index and processing documents..."
