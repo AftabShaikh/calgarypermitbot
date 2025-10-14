@@ -269,9 +269,8 @@ EOF
         --resource-group $RESOURCE_GROUP \
         --startup-file "python run_app.py"
     
-    # Force clean deployment by stopping app and clearing cache
-    echo "🔄 Preparing app for clean deployment..."
-    az webapp stop --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+    # Prepare for clean deployment without stopping the app
+    echo "🔄 Preparing for clean deployment..."
     
     # Clear any existing deployment artifacts and cached builds
     echo "🧹 Clearing deployment cache and forcing fresh build..."
@@ -283,13 +282,7 @@ EOF
         --resource-group $RESOURCE_GROUP \
         --setting-names WEBSITE_SKIP_AUTOCONFIGURE_STATICFILES WEBSITE_DISABLE_SCM_SEPARATION 2>/dev/null || true
     
-    # Restart to apply configuration changes
-    echo "🔄 Restarting app to apply configuration changes..."
-    az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
-    echo "⏳ Waiting for app to restart..."
-    for i in {1..5}; do
-        sleep 5
-    done
+    echo "✅ Ready for deployment - app will remain running during deployment"
     
     # Try deployment with timeout (5 minutes)
     echo "🚀 Starting backend deployment (timeout: 5 minutes)..."
@@ -297,9 +290,9 @@ EOF
     if deploy_backend; then
         echo "✅ Backend deployed successfully"
         
-        # Ensure app is started (in case it went to STOP state)
-        echo "🔄 Ensuring app is started..."
-        az webapp start --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+        # Restart app to ensure it's running with new deployment
+        echo "🔄 Restarting app to apply new deployment..."
+        az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
         
         # Wait for deployment to complete and check if dependencies were installed
         echo "⏳ Waiting for deployment to complete..."
@@ -385,16 +378,12 @@ EOF
             --resource-group $RESOURCE_GROUP \
             --startup-file "python run_app.py"
         
-        # Ensure app is started (not in STOP state)
-        echo "🔄 Starting the app..."
-        az webapp start --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
-        
-        # Wait a bit for startup
-        sleep 15
-        
-        # Restart to apply new settings
+        # Restart to apply new settings and ensure app is running
         echo "🔄 Restarting with new configuration..."
         az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+        
+        # Wait for restart to complete
+        sleep 20
         
         echo "✅ Automatic startup fix applied - app should be running..."
     fi
