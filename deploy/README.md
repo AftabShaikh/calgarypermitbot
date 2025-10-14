@@ -260,9 +260,47 @@ The deployment automatically uploads all files from the `data/` folder to the Az
    - Use the cleanup script to resolve conflicts  
    - The deployment now uses timestamp-based naming to avoid conflicts
 
-2. **Deployment Timeout**
-   - Increase timeout in deployment scripts
-   - Check Azure service availability in West US 2
+2. **Deployment Timeout or Stuck Deployments** (NEW - ENHANCED)
+   
+   **What happens**: The main deployment script (`02-deploy-app.sh`) now includes:
+   - ✅ **Automatic timeout handling** (10 minutes for each deployment)
+   - ✅ **Manual deployment fallback** when timeouts occur
+   - ✅ **Multiple deployment method options**
+   
+   **If deployment gets stuck**:
+   - The script will automatically timeout after 10 minutes
+   - You'll see detailed manual deployment instructions
+   - Deployment packages are pre-created and ready for manual upload
+   
+   **Manual deployment options**:
+   ```bash
+   # Use dedicated manual deployment scripts
+   ./deploy/manual-backend-deploy.sh    # For backend only
+   ./deploy/manual-frontend-deploy.sh   # For frontend only
+   
+   # Check deployment status anytime
+   ./deploy/check-deployment-status.sh
+   ```
+   
+   **Manual deployment methods provided**:
+   - Azure Portal upload (GUI method)
+   - Azure CLI with extended timeout
+   - FTP/FTPS deployment
+   - Alternative Azure CLI commands
+   - Deployment restart and retry logic
+
+3. **Checking Deployment Progress**
+   ```bash
+   # Real-time status monitoring
+   ./deploy/check-deployment-status.sh
+   
+   # This script shows:
+   # - App service status (running/stopped)
+   # - Health check results
+   # - Recent deployment information
+   # - Recent application logs
+   # - Direct links to Azure Portal
+   ```
 
 2. **Permission Errors**
    - Ensure proper Azure permissions (Contributor role)
@@ -328,3 +366,62 @@ After successful deployment, you'll have:
 - ✅ All data files uploaded and indexed
 
 Visit your frontend URL to start using the application!
+
+---
+
+## 🛠️ NEW: Enhanced Deployment Scripts
+
+### Available Scripts
+
+| Script | Purpose | When to Use |
+|--------|---------|-------------|
+| `01-prepare-resources.sh` | Creates Azure resources | First-time setup |
+| `02-deploy-app.sh` | **Enhanced** with timeout handling | Main deployment (now safer) |
+| `manual-backend-deploy.sh` | Manual backend deployment | When auto-deployment times out |
+| `manual-frontend-deploy.sh` | Manual frontend deployment | When auto-deployment times out |
+| `check-deployment-status.sh` | Monitor deployment progress | Anytime to check status |
+| `cleanup.sh` | Remove all resources | When done testing |
+
+### Enhanced Features (NEW)
+
+**Timeout Protection**:
+- ✅ Automatic 10-minute timeout for deployments
+- ✅ Graceful fallback to manual deployment instructions
+- ✅ Pre-prepared deployment packages ready for manual upload
+
+**Multiple Deployment Methods**:
+- ✅ Standard Azure CLI deployment (with timeout)
+- ✅ Manual Azure Portal upload
+- ✅ FTP/FTPS deployment
+- ✅ Alternative CLI commands with different options
+
+**Better Monitoring**:
+- ✅ Real-time status checks
+- ✅ Health endpoint monitoring
+- ✅ Recent log display
+- ✅ Direct Azure Portal links
+
+### Quick Reference
+
+```bash
+# Standard deployment (enhanced with timeouts)
+./deploy/01-prepare-resources.sh
+./deploy/02-deploy-app.sh
+
+# If deployment gets stuck, you'll see instructions like:
+# "💡 Use the provided manual deployment script: ./deploy/manual-backend-deploy.sh"
+
+# Check status anytime
+./deploy/check-deployment-status.sh
+
+# Manual deployment if needed
+./deploy/manual-backend-deploy.sh     # Backend only
+./deploy/manual-frontend-deploy.sh    # Frontend only
+```
+
+**What's Different Now**:
+- No more indefinite hanging on `az webapp deploy`
+- Clear manual deployment instructions when timeouts occur
+- Ready-to-use deployment packages
+- Better visibility into deployment progress
+- Multiple fallback options for reliable deployment
