@@ -174,50 +174,32 @@ if [ -d "$BACKEND_FOLDER" ]; then
 SCM_DO_BUILD_DURING_DEPLOYMENT=true
 EOF
 
-    # Create a startup script that uses the correct Python environment
-    cat > startup_wrapper.sh << 'EOF'
-#!/bin/bash
-
-echo "🚀 Calgary Permit Bot - Startup Wrapper"
-echo "======================================="
-
-# Check for virtual environment
-if [ -d "/home/site/wwwroot/antenv" ]; then
-    echo "✅ Found Oryx virtual environment"
-    export PATH="/home/site/wwwroot/antenv/bin:$PATH"
-    export PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/antenv/lib/python3.11/site-packages"
-    PYTHON_CMD="/home/site/wwwroot/antenv/bin/python"
-else
-    echo "⚠️ No virtual environment found, using system Python"
-    export PYTHONPATH="/home/site/wwwroot"
-    PYTHON_CMD="python"
-fi
-
-# Set environment variables
-export WEBSITE_HOSTNAME="true"
-export RUNNING_IN_PRODUCTION="true"
-
-# Navigate to app directory
-cd /home/site/wwwroot
-
-echo "🔍 Environment check:"
-echo "Python: $($PYTHON_CMD --version)"
-echo "Working directory: $(pwd)"
-echo "Python path: $PYTHONPATH"
-
-# Check if dependencies are available
-echo "🔍 Checking key dependencies..."
-$PYTHON_CMD -c "import quart; print('✅ quart available')" || echo "❌ quart not available"
-$PYTHON_CMD -c "import azure.identity; print('✅ azure.identity available')" || echo "❌ azure.identity not available"
-
-# Start the application
-echo "🚀 Starting application..."
-exec $PYTHON_CMD run_app.py
-EOF
-
-    chmod +x startup_wrapper.sh
+    # Use the optimized requirements-core.txt for Azure App Service deployment
+    echo "📝 Using requirements-core.txt for Azure App Service deployment..."
+    if [ ! -f "requirements-core.txt" ]; then
+        echo "❌ requirements-core.txt not found in backend directory"
+        exit 1
+    fi
     
-    # Create deployment package, excluding development files
+    # Copy requirements-core.txt as requirements.txt for deployment
+    cp requirements-core.txt requirements.txt
+    echo "✅ Using requirements-core.txt as deployment requirements"
+
+    # Verify startup.py exists
+    if [ ! -f "startup.py" ]; then
+        echo "❌ startup.py not found in backend directory"
+        exit 1
+    fi
+    echo "✅ Using existing startup.py for Azure App Service"
+
+    # Verify required files exist
+    if [ ! -f "runtime.txt" ]; then
+        echo "❌ runtime.txt not found in backend directory"
+        exit 1
+    fi
+    echo "✅ Using existing runtime.txt for Python version specification"
+    
+    # Create deployment package with optimized structure
     zip -r /tmp/backend-deploy.zip . \
         -x "*.pyc" \
         "__pycache__/*" \
@@ -226,29 +208,12 @@ EOF
         ".env" \
         "*.log" \
         ".git/*" \
-        "node_modules/*"
-    
-    # Also create a minimal deployment package for troubleshooting
-    echo "📦 Creating minimal deployment package..."
-    zip -r /tmp/backend-deploy-minimal.zip . \
-        -x "*.pyc" \
-        "__pycache__/*" \
-        ".pytest_cache/*" \
-        "tests/*" \
-        ".env" \
-        "*.log" \
-        ".git/*" \
         "node_modules/*" \
-        "requirements.txt"
-    
-    # Add the core requirements as the main requirements.txt in minimal package
-    cd /tmp
-    mkdir -p backend-minimal-extract
-    cd backend-minimal-extract
-    unzip -q ../backend-deploy-minimal.zip
-    cp requirements-core.txt requirements.txt
-    zip -r ../backend-deploy-minimal.zip .
-    cd "$BACKEND_FOLDER"
+        "requirements-*.txt" \
+        "Dockerfile*" \
+        "docker*" \
+        ".dockerignore"
+
     
     echo "🚀 Deploying backend to Azure App Service..."
     
@@ -328,15 +293,17 @@ EOF
         echo "8. Use the provided manual deployment script:"
         echo "   ./deploy/manual-backend-deploy.sh"
         echo ""
-        echo "9. Try minimal deployment (core dependencies only):"
-        echo "   az webapp deployment source config-zip \\"
-        echo "       --name $BACKEND_APP_NAME \\"
-        echo "       --resource-group $RESOURCE_GROUP \\"
-        echo "       --src /tmp/backend-deploy-minimal.zip"
+        echo "9. Check deployment logs in Azure Portal:"
+        echo "   - Go to App Service > Deployment Center > Logs"
+        echo "   - Look for Oryx build logs and Python dependency installation"
         echo ""
-        echo "💡 Deployment packages ready:"
-        echo "    Full: /tmp/backend-deploy.zip ($(ls -lh /tmp/backend-deploy.zip 2>/dev/null | awk '{print $5}' || echo 'N/A'))"
-        echo "    Minimal: /tmp/backend-deploy-minimal.zip ($(ls -lh /tmp/backend-deploy-minimal.zip 2>/dev/null | awk '{print $5}' || echo 'N/A'))"
+        echo "10. Enable deployment troubleshooting:"
+        echo "    az webapp log config --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP \\"
+        echo "        --application-logging filesystem --level information"
+        echo ""
+        echo "💡 Deployment package ready:"
+        echo "    File: /tmp/backend-deploy.zip ($(ls -lh /tmp/backend-deploy.zip 2>/dev/null | awk '{print $5}' || echo 'N/A'))"
+        echo "    Contains optimized requirements.txt for Azure App Service Oryx build"
         echo ""
         echo "Press Enter after manual deployment is complete, or Ctrl+C to exit..."
         if read -r; then
@@ -565,7 +532,7 @@ echo "⚙️  Configuring application settings..."
 BACKEND_URL="https://$BACKEND_APP_NAME.azurewebsites.net"
 FRONTEND_URL="https://$FRONTEND_APP_NAME.azurewebsites.net"
 
-# Configure backend app settings
+# Configure backend app settings for native Python deployment
 echo "🔧 Configuring backend application settings..."
 az webapp config appsettings set \
     --name $BACKEND_APP_NAME \
@@ -579,29 +546,40 @@ az webapp config appsettings set \
         AZURE_COSMOSDB_DATABASE="${COSMOS_DATABASE:-chathistory}" \
         AZURE_COSMOSDB_CONTAINER="${COSMOS_CONTAINER:-chatcontainer}" \
         WEBSITE_HTTPLOGGING_RETENTION_DAYS="7" \
-        PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/antenv/lib/python3.11/site-packages" \
-        PATH="/home/site/wwwroot/antenv/bin:$PATH" \
         SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
         ENABLE_ORYX_BUILD="true" \
-        ORYX_ENV_TYPE="" \
+        BUILD_FLAGS="" \
+        ORYX_ENV_TYPE="python" \
+        ORYX_ENV_NAME="antenv" \
         DISABLE_COLLECTSTATIC="1" \
         XDG_CACHE_HOME="/tmp/.cache" \
         RUNNING_IN_PRODUCTION="true" \
-        WEBSITE_HOSTNAME="true"
+        WEBSITE_HOSTNAME="true" \
+        PYTHONUNBUFFERED="1" \
+        PYTHONIOENCODING="UTF-8"
 
-# Ensure Python runtime is properly configured
+# Configure Python runtime for Azure App Service
 echo "🔧 Configuring Python runtime..."
 az webapp config set \
     --name $BACKEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
     --linux-fx-version "PYTHON|3.11"
 
-# Set startup command to use the wrapper script
+# Enable remote debugging (helpful for troubleshooting)
+echo "🔧 Enabling remote debugging..."
+az webapp config appsettings set \
+    --name $BACKEND_APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --settings \
+        WEBSITE_ENABLE_SYNC_UPDATE_SITE="true" \
+        WEBSITE_RUN_FROM_PACKAGE="0"
+
+# Set startup command to use Python startup script
 echo "🔧 Configuring backend startup command..."
 az webapp config set \
     --name $BACKEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
-    --startup-file "bash startup_wrapper.sh"
+    --startup-file "python startup.py"
 
 # Configure frontend app settings  
 echo "🎨 Configuring frontend application settings..."

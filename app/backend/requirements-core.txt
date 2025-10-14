@@ -1,36 +1,42 @@
 # Core dependencies for Calgary Permit Bot - Azure App Service
-# This file contains only essential dependencies for initial deployment
+# Optimized for Azure App Service Oryx build system
 
 # Web framework
-quart>=0.19.4
-quart-cors>=0.7.0
-gunicorn>=21.2.0
-uvicorn[standard]>=0.24.0
+quart==0.19.4
+quart-cors==0.7.0
+gunicorn==21.2.0
+uvicorn[standard]==0.24.0
 
-# Core Azure packages (essential)
-azure-identity>=1.15.0
-azure-storage-blob>=12.19.0
-azure-search-documents>=11.4.0
-azure-cosmos>=4.9.0
+# Core Azure packages
+azure-identity==1.17.1
+azure-storage-blob==12.22.0
+azure-search-documents==11.6.0b12
+azure-cosmos==4.9.0
 
 # OpenAI
-openai>=1.12.0
+openai==1.63.0
 
 # Essential utilities
-aiohttp>=3.10.0
-aiofiles>=24.1.0
-python-dotenv>=1.0.1
-pyyaml>=6.0.2
-tenacity>=9.0.0
+aiohttp==3.10.11
+aiofiles==24.1.0
+python-dotenv==1.0.1
+pyyaml==6.0.2
+tenacity==9.0.0
 
 # HTTP and async
-httpx>=0.27.0
-anyio>=4.4.0
+httpx[http2]==0.27.0
+anyio==4.4.0
 
 # Security
-cryptography>=44.0.0
-pyjwt[crypto]>=2.10.1
+cryptography==44.0.1
+pyjwt[crypto]==2.10.1
 
 # Basic data processing
-beautifulsoup4>=4.12.3
-pillow>=10.4.0
+beautifulsoup4==4.12.3
+pillow==10.4.0
+
+# Runtime requirements for Azure App Service
+flask==3.0.3
+werkzeug==3.0.6
+click==8.1.7
+typing-extensions==4.13.2
