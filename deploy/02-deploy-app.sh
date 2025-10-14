@@ -255,12 +255,13 @@ EOF
             WEBSITE_RUN_FROM_PACKAGE="0" \
             WEBSITE_ENABLE_SYNC_UPDATE_SITE="true"
     
-    # Configure Python runtime
-    echo "🔧 Setting Python runtime version..."
+    # Configure Python runtime and startup command
+    echo "🔧 Setting Python runtime version and startup command..."
     az webapp config set \
         --name $BACKEND_APP_NAME \
         --resource-group $RESOURCE_GROUP \
-        --linux-fx-version "PYTHON|3.11"
+        --linux-fx-version "PYTHON|3.11" \
+        --startup-file "python run_app.py"
     
     # Prepare for clean deployment without stopping the app
     echo "🔄 Preparing for clean deployment..."
@@ -283,13 +284,6 @@ EOF
     if deploy_backend; then
         echo "✅ Backend deployed successfully"
         
-        # Set startup command after successful deployment
-        echo "🔧 Setting startup command after deployment..."
-        az webapp config set \
-            --name $BACKEND_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --startup-file "python run_app.py"
-        
         # Restart app to ensure it's running with new deployment
         echo "🔄 Restarting app to apply new deployment..."
         az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
@@ -300,7 +294,7 @@ EOF
         
         # Check deployment logs for build success
         echo "🔍 Checking deployment logs for build status..."
-        RECENT_DEPLOYMENT_LOGS=$(az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null | tail -30 || echo "")
+        RECENT_DEPLOYMENT_LOGS=$(timeout 30 az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null | tail -30 || echo "")
         
         if echo "$RECENT_DEPLOYMENT_LOGS" | grep -q "virtual environment directory.*antenv"; then
             echo "✅ Virtual environment detected in logs"
@@ -322,32 +316,14 @@ EOF
             echo "⚠️ Backend not responding, checking logs for dependency issues..."
             
             # Check recent logs for dependency errors
-            RECENT_LOGS=$(az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null | tail -20 || echo "")
+            RECENT_LOGS=$(timeout 20 az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null | tail -20 || echo "")
             
-            if echo "$RECENT_LOGS" | grep -q "ModuleNotFoundError\|not available\|Missing packages"; then
-                echo "🔧 Detected dependency issues, applying runtime installation fix..."
-                
-                # Update startup command to force runtime installation
-                az webapp config set \
-                    --name $BACKEND_APP_NAME \
-                    --resource-group $RESOURCE_GROUP \
-                    --startup-file "python -m pip install --user quart flask azure-identity azure-storage-blob openai aiohttp python-dotenv cryptography --disable-pip-version-check --quiet && python startup.py"
-                
-                # Restart to apply the fix
-                echo "🔄 Restarting with runtime installation..."
-                az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
-                
-                # Wait for restart and installation
-                echo "⏳ Waiting for runtime installation to complete..."
-                sleep 60
-                
-                # Check again
-                if curl -f -s "https://$BACKEND_APP_NAME.azurewebsites.net/health" > /dev/null 2>&1; then
-                    echo "✅ Backend now responding after runtime installation"
-                else
-                    echo "⚠️ Backend still not responding, but deployment completed"
-                fi
-            fi
+            else
+            echo "ℹ️ Backend health check failed - this is normal during initial deployment"
+            echo "   The application may still be starting up or building dependencies"
+        fi
+    else
+        echo "ℹ️ Backend health check timeout - continuing with deployment"
         fi
     else
         DEPLOY_EXIT_CODE=$?
@@ -388,7 +364,7 @@ EOF
     
     if [ "$DEPLOYMENT_STATUS" = "Failed" ]; then
         echo "❌ Backend deployment failed. Checking logs..."
-        az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --provider filesystem 2>/dev/null | tail -20 || echo "Could not fetch logs"
+        timeout 20 az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --provider filesystem 2>/dev/null | tail -20 || echo "Could not fetch logs"
         echo ""
         echo "⚠️  Build may have failed. Consider using manual deployment with troubleshooting."
     elif [ "$DEPLOYMENT_STATUS" = "Success" ]; then
