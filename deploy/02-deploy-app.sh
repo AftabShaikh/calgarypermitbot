@@ -243,12 +243,12 @@ EOF
         --resource-group $RESOURCE_GROUP \
         --linux-fx-version "PYTHON|3.11"
     
-    # Set startup command with runtime dependency installation fallback
-    echo "🔧 Setting startup command with dependency installation..."
+    # Set simple startup command to avoid crashes
+    echo "🔧 Setting simple startup command..."
     az webapp config set \
         --name $BACKEND_APP_NAME \
         --resource-group $RESOURCE_GROUP \
-        --startup-file "pip install --user -r requirements.txt --disable-pip-version-check --quiet || echo 'Pip install failed, using runtime installation'; python startup.py"
+        --startup-file "python run_app.py"
     
     # Force clean deployment by stopping app and clearing cache
     echo "🔄 Preparing app for clean deployment..."
@@ -271,6 +271,10 @@ EOF
     echo "   Note: You can press Ctrl+C to interrupt if it gets stuck"
     if deploy_backend; then
         echo "✅ Backend deployed successfully"
+        
+        # Ensure app is started (in case it went to STOP state)
+        echo "🔄 Ensuring app is started..."
+        az webapp start --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
         
         # Wait for deployment to complete and check if dependencies were installed
         echo "⏳ Waiting for deployment to complete..."
@@ -331,14 +335,27 @@ EOF
         echo "   - The application should still start successfully"
         echo ""
         
-        # Apply runtime installation fix automatically
-        echo "🔧 Configuring runtime dependency installation as fallback..."
+        # Apply simple startup fix automatically and restart app
+        echo "🔧 Fixing app startup and ensuring it's running..."
+        
+        # Set simple startup command
         az webapp config set \
             --name $BACKEND_APP_NAME \
             --resource-group $RESOURCE_GROUP \
-            --startup-file "python -m pip install --user quart flask azure-identity azure-storage-blob openai aiohttp python-dotenv cryptography --disable-pip-version-check --quiet && python startup.py"
+            --startup-file "python run_app.py"
         
-        echo "✅ Automatic fallback configured - continuing deployment..."
+        # Ensure app is started (not in STOP state)
+        echo "🔄 Starting the app..."
+        az webapp start --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+        
+        # Wait a bit for startup
+        sleep 15
+        
+        # Restart to apply new settings
+        echo "🔄 Restarting with new configuration..."
+        az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+        
+        echo "✅ Automatic startup fix applied - app should be running..."
     fi
     
     # Wait for backend build and start
