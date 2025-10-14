@@ -251,7 +251,7 @@ EOF
             ORYX_PYTHON_VERSION="3.11" \
             PRE_BUILD_SCRIPT_PATH="" \
             POST_BUILD_SCRIPT_PATH="" \
-            DISABLE_COLLECTSTATIC="1" \
+            DISABLE_COLLECTSTATIC="true" \
             WEBSITE_RUN_FROM_PACKAGE="0" \
             WEBSITE_ENABLE_SYNC_UPDATE_SITE="true"
     
@@ -626,7 +626,7 @@ az webapp config appsettings set \
         ORYX_PYTHON_VERSION="3.11" \
         PRE_BUILD_SCRIPT_PATH="" \
         POST_BUILD_SCRIPT_PATH="" \
-        DISABLE_COLLECTSTATIC="1" \
+        DISABLE_COLLECTSTATIC="true" \
         XDG_CACHE_HOME="/tmp/.cache" \
         RUNNING_IN_PRODUCTION="true" \
         WEBSITE_HOSTNAME="true" \
