@@ -420,13 +420,61 @@ create_openai_service() {
         if echo "$ERROR_OUTPUT" | grep -q "SpecialFeatureOrQuotaIdRequired\|QuotaId.*required"; then
             echo "   ⚠️  Azure OpenAI access not available for this subscription"
             echo "   💡 This requires special approval from Microsoft"
-            echo "   📋 To request access:"
+            echo ""
+            echo "   📋 OPTION 1: Request Access (Recommended)"
             echo "      1. Visit: https://aka.ms/oai/access"
             echo "      2. Fill out the Azure OpenAI access request form"
             echo "      3. Wait for approval (can take several days)"
+            echo "      4. Re-run this script once approved"
+            echo ""
+            echo "   � OPTION 2: Manual Creation (Immediate)"
+            echo "      If you have access or want to create manually:"
+            echo ""
+            echo "   🌐 Manual Steps via Azure Portal:"
+            echo "      1. Go to: https://portal.azure.com"
+            echo "      2. Navigate to your resource group: $RESOURCE_GROUP"
+            echo "      3. Click '+ Create' → Search 'Azure OpenAI'"
+            echo "      4. Create with these settings:"
+            echo "         - Name: $OPENAI_SERVICE"
+            echo "         - Resource Group: $RESOURCE_GROUP"
+            echo "         - Location: $LOCATION"
+            echo "         - Pricing Tier: Standard S0"
+            echo "      5. After creation, go to 'Model deployments'"
+            echo "      6. Deploy these models:"
+            echo "         • Model: gpt-4o-mini, Deployment: gpt-4o-mini, Version: 2024-07-18"
+            echo "         • Model: text-embedding-3-large, Deployment: text-embedding-3-large, Version: 1"
+            echo ""
+            echo "   💻 Manual Steps via Azure CLI:"
+            echo "      # Create OpenAI service"
+            echo "      az cognitiveservices account create \\"
+            echo "        --name $OPENAI_SERVICE \\"
+            echo "        --resource-group $RESOURCE_GROUP \\"
+            echo "        --location $LOCATION \\"
+            echo "        --kind OpenAI \\"
+            echo "        --sku S0"
+            echo ""
+            echo "      # Deploy GPT model"
+            echo "      az cognitiveservices account deployment create \\"
+            echo "        --name $OPENAI_SERVICE \\"
+            echo "        --resource-group $RESOURCE_GROUP \\"
+            echo "        --deployment-name gpt-4o-mini \\"
+            echo "        --model-name gpt-4o-mini \\"
+            echo "        --model-version 2024-07-18 \\"
+            echo "        --model-format OpenAI \\"
+            echo "        --capacity 10"
+            echo ""
+            echo "      # Deploy embedding model"
+            echo "      az cognitiveservices account deployment create \\"
+            echo "        --name $OPENAI_SERVICE \\"
+            echo "        --resource-group $RESOURCE_GROUP \\"
+            echo "        --deployment-name text-embedding-3-large \\"
+            echo "        --model-name text-embedding-3-large \\"
+            echo "        --model-version 1 \\"
+            echo "        --model-format OpenAI \\"
+            echo "        --capacity 10"
             echo ""
             echo "   🔄 Continuing deployment without OpenAI service..."
-            echo "   📝 You can add OpenAI service later once access is approved"
+            echo "   📝 You can create the OpenAI service manually using steps above"
             
             # Set a flag to indicate OpenAI is not available
             export OPENAI_UNAVAILABLE=true
@@ -569,7 +617,19 @@ fi
 
 else
     echo "📋 OpenAI models skipped - service not available"
-    echo "   You can deploy models later once OpenAI access is approved"
+    echo ""
+    echo "   💡 To add OpenAI functionality later:"
+    echo ""
+    echo "   🌐 Manual Steps via Azure Portal:"
+    echo "      1. Go to: https://portal.azure.com"
+    echo "      2. Navigate to your resource group: $RESOURCE_GROUP"
+    echo "      3. Create Azure OpenAI service (if not exists)"
+    echo "      4. Go to your OpenAI service → 'Model deployments'"
+    echo "      5. Deploy these models:"
+    echo "         • Model: gpt-4o-mini, Deployment: gpt-4o-mini, Version: 2024-07-18"
+    echo "         • Model: text-embedding-3-large, Deployment: text-embedding-3-large, Version: 1"
+    echo ""
+    echo "   💻 Or re-run this script once you have OpenAI access"
 fi
 
 # Step 7: Register Cosmos DB provider and create Cosmos DB
@@ -750,30 +810,104 @@ if ! az account show > /dev/null 2>&1; then
     exit 1
 fi
 
-echo "   ✓ Environment validation completed"
+echo "   ✅ Environment validation completed
+
+# Additional pre-flight checks for App Service Plan
+echo "   🔍 Additional validation for App Service Plan..."
+echo "   ✓ Checking network connectivity to Azure..."
+if ! curl -s --max-time 10 https://management.azure.com > /dev/null; then
+    echo "   ⚠️  Network connectivity issue detected"
+    echo "   This might cause the App Service Plan creation to hang"
+fi
+
+echo "   ✓ Checking if SKU $APP_SERVICE_SKU is supported in $LOCATION..."
+if ! az appservice list-locations --sku $APP_SERVICE_SKU --linux-workers-enabled --query "[?name=='$LOCATION']" -o tsv 2>/dev/null | grep -q "$LOCATION"; then
+    echo "   ⚠️  SKU $APP_SERVICE_SKU might not be available in $LOCATION"
+    echo "   This could cause the creation to fail or hang"
+fi
+
+echo "   ✅ Pre-flight checks completed"
+
+# Capture both stdout and stderr for App Service Plan creation"
 
 # Capture both stdout and stderr for App Service Plan creation
 echo "Creating App Service Plan..."
 echo "   Command: az appservice plan create --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --location $LOCATION --sku $APP_SERVICE_SKU --is-linux"
 echo "   This may take several minutes..."
+echo ""
+echo "   💡 If this step hangs, you can:"
+echo "      • Press Ctrl+C to cancel"
+echo "      • Create the App Service Plan manually via Azure Portal"
+echo "      • Re-run this script (it will detect the existing plan)"
+echo ""
 
-# Run the command with timeout to prevent indefinite hanging
-timeout 300 az appservice plan create \
-    --name $APP_SERVICE_PLAN \
-    --resource-group $RESOURCE_GROUP \
-    --location $LOCATION \
-    --sku $APP_SERVICE_SKU \
-    --is-linux > /tmp/asp_output.log 2>&1
-ASP_EXIT_CODE=$?
+# Run the command with progress tracking and timeout
+echo "   🔄 Starting App Service Plan creation..."
+
+# Check if timeout command is available
+if command -v timeout >/dev/null 2>&1; then
+    echo "   ⏱️  Using timeout protection (5 minutes max)"
+    timeout 300 az appservice plan create \
+        --name $APP_SERVICE_PLAN \
+        --resource-group $RESOURCE_GROUP \
+        --location $LOCATION \
+        --sku $APP_SERVICE_SKU \
+        --is-linux > /tmp/asp_output.log 2>&1 &
+    
+    # Get the background process ID
+    ASP_PID=$!
+    
+    # Wait with progress indicators
+    WAIT_COUNT=0
+    while kill -0 $ASP_PID 2>/dev/null; do
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+        echo "   📊 Still creating... (${WAIT_COUNT}0s elapsed)"
+        sleep 10
+        
+        # Additional timeout check (6 minutes total)
+        if [ $WAIT_COUNT -ge 36 ]; then
+            echo "   ⏰ Taking too long, terminating process..."
+            kill $ASP_PID 2>/dev/null || true
+            sleep 2
+            kill -9 $ASP_PID 2>/dev/null || true
+            echo "❌ App Service Plan creation timed out after 6 minutes"
+            echo "This might indicate network issues or Azure service problems"
+            echo "You can try running the script again or check Azure portal"
+            exit 1
+        fi
+    done
+    
+    # Wait for the process to complete and get exit code
+    wait $ASP_PID
+    ASP_EXIT_CODE=$?
+else
+    echo "   ⚠️  timeout command not available, running without timeout protection"
+    echo "   📊 If this hangs, press Ctrl+C and try again"
+    az appservice plan create \
+        --name $APP_SERVICE_PLAN \
+        --resource-group $RESOURCE_GROUP \
+        --location $LOCATION \
+        --sku $APP_SERVICE_SKU \
+        --is-linux > /tmp/asp_output.log 2>&1
+    ASP_EXIT_CODE=$?
+fi
 
 # Read the output
-ASP_OUTPUT=$(cat /tmp/asp_output.log)
+ASP_OUTPUT=$(cat /tmp/asp_output.log 2>/dev/null || echo "No output file generated")
 
-# Check if command timed out
+# Check if command timed out (exit code 124 for timeout command, or our manual timeout)
 if [ $ASP_EXIT_CODE -eq 124 ]; then
-    echo "❌ App Service Plan creation timed out after 5 minutes"
+    echo "❌ App Service Plan creation timed out"
     echo "This might indicate network issues or Azure service problems"
-    echo "You can try running the script again or check Azure portal"
+    echo "Output so far:"
+    echo "$ASP_OUTPUT"
+    echo ""
+    echo "💡 Try these troubleshooting steps:"
+    echo "   1. Check your network connection"
+    echo "   2. Verify you're logged into Azure CLI: az account show"
+    echo "   3. Try a different region: export LOCATION='eastus'"
+    echo "   4. Check Azure service status: https://status.azure.com"
+    echo "   5. Try creating manually via Azure Portal"
     exit 1
 fi
 
@@ -831,6 +965,28 @@ else
     echo ""
     echo "Checking available SKUs in $LOCATION..."
     az appservice list-locations --sku $APP_SERVICE_SKU --linux-workers-enabled --query "[?contains(name, '$LOCATION')]" -o table || true
+    echo ""
+    echo "🛠️  Manual App Service Plan Creation:"
+    echo "   📋 Azure Portal Method:"
+    echo "      1. Go to: https://portal.azure.com/#create/Microsoft.AppServicePlan"
+    echo "      2. Use these exact settings:"
+    echo "         • Subscription: $(az account show --query name -o tsv 2>/dev/null || echo 'Your subscription')"
+    echo "         • Resource Group: $RESOURCE_GROUP"
+    echo "         • Name: $APP_SERVICE_PLAN"
+    echo "         • Operating System: Linux"
+    echo "         • Region: $LOCATION"
+    echo "         • Pricing Tier: $APP_SERVICE_SKU"
+    echo "      3. Click 'Review + create' then 'Create'"
+    echo "      4. After creation, re-run this script"
+    echo ""
+    echo "   💻 Azure CLI Method:"
+    echo "      az appservice plan create \\"
+    echo "        --name $APP_SERVICE_PLAN \\"
+    echo "        --resource-group $RESOURCE_GROUP \\"
+    echo "        --location $LOCATION \\"
+    echo "        --sku $APP_SERVICE_SKU \\"
+    echo "        --is-linux"
+    echo ""
     exit 1
 fi
 fi
@@ -1092,7 +1248,13 @@ if [ "$OPENAI_UNAVAILABLE" = "true" ]; then
     echo ""
     echo "⚠️  IMPORTANT: OpenAI service is not available"
     echo "   The application may have limited AI functionality until OpenAI access is approved"
-    echo "   You can still proceed with deployment using other Azure services"
+    echo ""
+    echo "   📋 To add OpenAI functionality:"
+    echo "      • Request access: https://aka.ms/oai/access"
+    echo "      • Or create manually (see detailed steps above)"
+    echo "      • Then re-run this script to detect and configure"
+    echo ""
+    echo "   ✅ You can still proceed with deployment using other Azure services"
     echo ""
 fi
 
