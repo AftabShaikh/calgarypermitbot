@@ -162,6 +162,12 @@ if [ -d "$BACKEND_FOLDER" ]; then
     
     echo "📦 Preparing backend deployment package..."
     
+    # Create .deployment file to ensure proper build
+    cat > .deployment << 'EOF'
+[config]
+SCM_DO_BUILD_DURING_DEPLOYMENT=true
+EOF
+    
     # Create deployment package, excluding development files
     zip -r /tmp/backend-deploy.zip . \
         -x "*.pyc" \
@@ -197,14 +203,18 @@ if [ -d "$BACKEND_FOLDER" ]; then
     
     echo "🚀 Deploying backend to Azure App Service..."
     
-    # Function to deploy with timeout
+    # Function to deploy with timeout using deployment source for proper build
     deploy_backend() {
-        timeout 600 az webapp deploy \
+        timeout 600 az webapp deployment source config-zip \
             --name $BACKEND_APP_NAME \
             --resource-group $RESOURCE_GROUP \
-            --src-path /tmp/backend-deploy.zip \
-            --type zip
+            --src /tmp/backend-deploy.zip
     }
+    
+    # Force clean deployment by restarting the app first
+    echo "🔄 Preparing app for clean deployment..."
+    az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+    sleep 10
     
     # Try deployment with timeout (10 minutes)
     if deploy_backend; then
@@ -234,19 +244,17 @@ if [ -d "$BACKEND_FOLDER" ]; then
         echo "   File Location: /tmp/backend-deploy.zip"
         echo "   (Copy this file to your local machine if needed)"
         echo ""
-        echo "5. Alternative command-line deployment:"
-        echo "   az webapp deploy \\"
+        echo "5. Alternative command-line deployment (with proper build):"
+        echo "   az webapp deployment source config-zip \\"
         echo "       --name $BACKEND_APP_NAME \\"
         echo "       --resource-group $RESOURCE_GROUP \\"
-        echo "       --src-path /tmp/backend-deploy.zip \\"
-        echo "       --type zip"
+        echo "       --src /tmp/backend-deploy.zip"
         echo ""
         echo "6. Using Azure CLI with larger timeout:"
-        echo "   timeout 1800 az webapp deploy \\"
+        echo "   timeout 1800 az webapp deployment source config-zip \\"
         echo "       --name $BACKEND_APP_NAME \\"
         echo "       --resource-group $RESOURCE_GROUP \\"
-        echo "       --src-path /tmp/backend-deploy.zip \\"
-        echo "       --type zip"
+        echo "       --src /tmp/backend-deploy.zip"
         echo ""
         echo "7. Using FTP/FTPS deployment:"
         echo "   - Get FTP credentials from Azure Portal > App Service > Deployment Center"
@@ -260,11 +268,10 @@ if [ -d "$BACKEND_FOLDER" ]; then
         echo "   ./deploy/manual-backend-deploy.sh"
         echo ""
         echo "9. Try minimal deployment (core dependencies only):"
-        echo "   az webapp deploy \\"
+        echo "   az webapp deployment source config-zip \\"
         echo "       --name $BACKEND_APP_NAME \\"
         echo "       --resource-group $RESOURCE_GROUP \\"
-        echo "       --src-path /tmp/backend-deploy-minimal.zip \\"
-        echo "       --type zip"
+        echo "       --src /tmp/backend-deploy-minimal.zip"
         echo ""
         echo "💡 Deployment packages ready:"
         echo "    Full: /tmp/backend-deploy.zip ($(ls -lh /tmp/backend-deploy.zip 2>/dev/null | awk '{print $5}' || echo 'N/A'))"
@@ -274,9 +281,25 @@ if [ -d "$BACKEND_FOLDER" ]; then
         echo "✅ Continuing with manual deployment assumption..."
     fi
     
-    # Wait for backend to start
-    echo "⏳ Waiting for backend to start..."
-    sleep 45
+    # Wait for backend to build and start
+    echo "⏳ Waiting for backend build and startup (this may take several minutes)..."
+    sleep 120
+    
+    # Check if the build completed successfully
+    echo "🔍 Checking deployment status..."
+    DEPLOYMENT_STATUS=$(az webapp deployment list --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --query "[0].status" -o tsv 2>/dev/null || echo "Unknown")
+    echo "Backend deployment status: $DEPLOYMENT_STATUS"
+    
+    if [ "$DEPLOYMENT_STATUS" = "Failed" ]; then
+        echo "❌ Backend deployment failed. Checking logs..."
+        az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP --provider filesystem 2>/dev/null | tail -20 || echo "Could not fetch logs"
+        echo ""
+        echo "⚠️  Build may have failed. Consider using manual deployment with troubleshooting."
+    elif [ "$DEPLOYMENT_STATUS" = "Success" ]; then
+        echo "✅ Backend deployment completed successfully"
+    else
+        echo "⏳ Backend deployment in progress..."
+    fi
     
     cd "$PROJECT_ROOT"
 else
@@ -398,11 +421,10 @@ EOF
     
     # Function to deploy frontend with timeout
     deploy_frontend() {
-        timeout 600 az webapp deploy \
+        timeout 600 az webapp deployment source config-zip \
             --name $FRONTEND_APP_NAME \
             --resource-group $RESOURCE_GROUP \
-            --src-path ../frontend-deploy.zip \
-            --type zip
+            --src ../frontend-deploy.zip
     }
     
     # Try deployment with timeout (10 minutes)
@@ -433,11 +455,10 @@ EOF
         echo "   File Location: /tmp/frontend-deploy.zip"
         echo ""
         echo "5. Alternative command-line deployment:"
-        echo "   az webapp deploy \\"
+        echo "   az webapp deployment source config-zip \\"
         echo "       --name $FRONTEND_APP_NAME \\"
         echo "       --resource-group $RESOURCE_GROUP \\"
-        echo "       --src-path /tmp/frontend-deploy.zip \\"
-        echo "       --type zip"
+        echo "       --src /tmp/frontend-deploy.zip"
         echo ""
         echo "💡 The deployment package is ready at: /tmp/frontend-deploy.zip"
         echo "    Size: $(ls -lh /tmp/frontend-deploy.zip | awk '{print $5}')"
@@ -482,17 +503,18 @@ az webapp config appsettings set \
         PYTHONPATH="/home/site/wwwroot" \
         SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
         ENABLE_ORYX_BUILD="true" \
+        ORYX_ENV_TYPE="prod-dependencies-only" \
         BUILD_FLAGS="" \
         XDG_CACHE_HOME="/tmp/.cache" \
         RUNNING_IN_PRODUCTION="true" \
         WEBSITE_HOSTNAME="true"
 
-# Set startup command for Python app
+# Set startup command for Python app - use Python directly instead of shell script
 echo "🔧 Configuring backend startup command..."
 az webapp config set \
     --name $BACKEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
-    --startup-file "startup.sh"
+    --startup-file "python run_app.py"
 
 # Configure frontend app settings  
 echo "🎨 Configuring frontend application settings..."
