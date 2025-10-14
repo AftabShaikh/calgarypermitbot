@@ -78,43 +78,58 @@ else
 fi
 
 # Step 1: Create Resource Group
-echo "📦 Creating resource group..."
+echo "📦 Checking for existing resource group..."
 echo "   Name: $RESOURCE_GROUP"
 echo "   Location: $LOCATION"
 
-# Capture both stdout and stderr for resource group creation
-echo "Creating resource group..."
-RG_OUTPUT=$(az group create \
-    --name $RESOURCE_GROUP \
-    --location $LOCATION 2>&1)
-RG_EXIT_CODE=$?
-
-if [ $RG_EXIT_CODE -eq 0 ]; then
-    echo "✅ Resource group created successfully"
+# Check if resource group already exists
+if az group show --name $RESOURCE_GROUP > /dev/null 2>&1; then
+    echo "✅ Found existing resource group '$RESOURCE_GROUP' - skipping creation"
     
-    # Quick check that resource group is ready (usually immediate)
-    echo "⏳ Verifying resource group..."
-    TIMEOUT=20  # 20 seconds max for resource group
-    COUNTER=0
-    
-    while [ $COUNTER -lt $TIMEOUT ]; do
-        if az group show --name $RESOURCE_GROUP --query "properties.provisioningState" -o tsv 2>/dev/null | grep -qi "succeeded"; then
-            echo "✅ Resource group is ready (took ${COUNTER}s)"
-            break
-        fi
-        echo "   📦 Verifying resource group... (${COUNTER}s elapsed)"
-        sleep 2
-        COUNTER=$((COUNTER + 2))
-    done
-    
-    if [ $COUNTER -ge $TIMEOUT ]; then
-        echo "⚠️  Resource group verification timed out after ${TIMEOUT}s, but continuing..."
+    # Verify the location matches
+    EXISTING_LOCATION=$(az group show --name $RESOURCE_GROUP --query "location" -o tsv 2>/dev/null)
+    if [ "$EXISTING_LOCATION" != "$LOCATION" ]; then
+        echo "⚠️  Warning: Existing resource group is in '$EXISTING_LOCATION', but script expects '$LOCATION'"
+        echo "   This might cause issues with some resources. Consider using a different resource group name."
+    else
+        echo "   Location matches: $LOCATION"
     fi
 else
-    echo "❌ Failed to create resource group"
-    echo "Error details:"
-    echo "$RG_OUTPUT"
-    exit 1
+    echo "   No existing resource group found, creating..."
+    # Capture both stdout and stderr for resource group creation
+    echo "   🔄 Creating resource group..."
+    RG_OUTPUT=$(az group create \
+        --name $RESOURCE_GROUP \
+        --location $LOCATION 2>&1)
+    RG_EXIT_CODE=$?
+
+    if [ $RG_EXIT_CODE -eq 0 ]; then
+        echo "✅ Resource group created successfully"
+        
+        # Quick check that resource group is ready (usually immediate)
+        echo "⏳ Verifying resource group..."
+        TIMEOUT=20  # 20 seconds max for resource group
+        COUNTER=0
+        
+        while [ $COUNTER -lt $TIMEOUT ]; do
+            if az group show --name $RESOURCE_GROUP --query "properties.provisioningState" -o tsv 2>/dev/null | grep -qi "succeeded"; then
+                echo "✅ Resource group is ready (took ${COUNTER}s)"
+                break
+            fi
+            echo "   📦 Verifying resource group... (${COUNTER}s elapsed)"
+            sleep 2
+            COUNTER=$((COUNTER + 2))
+        done
+        
+        if [ $COUNTER -ge $TIMEOUT ]; then
+            echo "⚠️  Resource group verification timed out after ${TIMEOUT}s, but continuing..."
+        fi
+    else
+        echo "❌ Failed to create resource group"
+        echo "Error details:"
+        echo "$RG_OUTPUT"
+        exit 1
+    fi
 fi
 
 # Helper functions for resource detection by type (not name)
@@ -810,7 +825,7 @@ if ! az account show > /dev/null 2>&1; then
     exit 1
 fi
 
-echo "   ✅ Environment validation completed
+echo "   ✅ Environment validation completed"
 
 # Additional pre-flight checks for App Service Plan
 echo "   🔍 Additional validation for App Service Plan..."
@@ -828,54 +843,52 @@ fi
 
 echo "   ✅ Pre-flight checks completed"
 
-# Capture both stdout and stderr for App Service Plan creation"
+    # Capture both stdout and stderr for App Service Plan creation
+    echo "   🔄 Creating App Service Plan..."
+    echo "   Command: az appservice plan create --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --location $LOCATION --sku $APP_SERVICE_SKU --is-linux"
+    echo "   This may take several minutes..."
+    echo ""
+    echo "   💡 If this step hangs, you can:"
+    echo "      • Press Ctrl+C to cancel"
+    echo "      • Create the App Service Plan manually via Azure Portal"
+    echo "      • Re-run this script (it will detect the existing plan)"
+    echo ""
 
-# Capture both stdout and stderr for App Service Plan creation
-echo "Creating App Service Plan..."
-echo "   Command: az appservice plan create --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --location $LOCATION --sku $APP_SERVICE_SKU --is-linux"
-echo "   This may take several minutes..."
-echo ""
-echo "   💡 If this step hangs, you can:"
-echo "      • Press Ctrl+C to cancel"
-echo "      • Create the App Service Plan manually via Azure Portal"
-echo "      • Re-run this script (it will detect the existing plan)"
-echo ""
+    # Run the command with progress tracking and timeout
+    echo "   🔄 Starting App Service Plan creation..."
 
-# Run the command with progress tracking and timeout
-echo "   🔄 Starting App Service Plan creation..."
-
-# Check if timeout command is available
-if command -v timeout >/dev/null 2>&1; then
-    echo "   ⏱️  Using timeout protection (5 minutes max)"
-    timeout 300 az appservice plan create \
-        --name $APP_SERVICE_PLAN \
-        --resource-group $RESOURCE_GROUP \
-        --location $LOCATION \
-        --sku $APP_SERVICE_SKU \
-        --is-linux > /tmp/asp_output.log 2>&1 &
-    
-    # Get the background process ID
-    ASP_PID=$!
-    
-    # Wait with progress indicators
-    WAIT_COUNT=0
-    while kill -0 $ASP_PID 2>/dev/null; do
-        WAIT_COUNT=$((WAIT_COUNT + 1))
-        echo "   📊 Still creating... (${WAIT_COUNT}0s elapsed)"
-        sleep 10
+    # Check if timeout command is available
+    if command -v timeout >/dev/null 2>&1; then
+        echo "   ⏱️  Using timeout protection (5 minutes max)"
+        timeout 300 az appservice plan create \
+            --name $APP_SERVICE_PLAN \
+            --resource-group $RESOURCE_GROUP \
+            --location $LOCATION \
+            --sku $APP_SERVICE_SKU \
+            --is-linux > /tmp/asp_output.log 2>&1 &
         
-        # Additional timeout check (6 minutes total)
-        if [ $WAIT_COUNT -ge 36 ]; then
-            echo "   ⏰ Taking too long, terminating process..."
-            kill $ASP_PID 2>/dev/null || true
-            sleep 2
-            kill -9 $ASP_PID 2>/dev/null || true
-            echo "❌ App Service Plan creation timed out after 6 minutes"
-            echo "This might indicate network issues or Azure service problems"
-            echo "You can try running the script again or check Azure portal"
-            exit 1
-        fi
-    done
+        # Get the background process ID
+        ASP_PID=$!
+        
+        # Wait with progress indicators
+        WAIT_COUNT=0
+        while kill -0 $ASP_PID 2>/dev/null; do
+            WAIT_COUNT=$((WAIT_COUNT + 1))
+            echo "   📊 Still creating... (${WAIT_COUNT}0s elapsed)"
+            sleep 10
+            
+            # Additional timeout check (6 minutes total)
+            if [ $WAIT_COUNT -ge 36 ]; then
+                echo "   ⏰ Taking too long, terminating process..."
+                kill $ASP_PID 2>/dev/null || true
+                sleep 2
+                kill -9 $ASP_PID 2>/dev/null || true
+                echo "❌ App Service Plan creation timed out after 6 minutes"
+                echo "This might indicate network issues or Azure service problems"
+                echo "You can try running the script again or check Azure portal"
+                exit 1
+            fi
+        done
     
     # Wait for the process to complete and get exit code
     wait $ASP_PID
@@ -988,7 +1001,7 @@ else
     echo "        --is-linux"
     echo ""
     exit 1
-fi
+    fi
 fi
 
 # Step 11: Create Backend Web App
