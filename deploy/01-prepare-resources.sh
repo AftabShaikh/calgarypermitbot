@@ -736,15 +736,46 @@ else
     echo "   Location: $LOCATION"
     echo "   SKU: $APP_SERVICE_SKU (Basic)"
 
+# Validate environment before creating App Service Plan
+echo "   🔍 Validating environment..."
+echo "   ✓ Checking if resource group exists..."
+if ! az group show --name $RESOURCE_GROUP > /dev/null 2>&1; then
+    echo "❌ Resource group '$RESOURCE_GROUP' does not exist!"
+    exit 1
+fi
+
+echo "   ✓ Checking Azure CLI authentication..."
+if ! az account show > /dev/null 2>&1; then
+    echo "❌ Not logged into Azure CLI. Please run 'az login' first."
+    exit 1
+fi
+
+echo "   ✓ Environment validation completed"
+
 # Capture both stdout and stderr for App Service Plan creation
 echo "Creating App Service Plan..."
-ASP_OUTPUT=$(az appservice plan create \
+echo "   Command: az appservice plan create --name $APP_SERVICE_PLAN --resource-group $RESOURCE_GROUP --location $LOCATION --sku $APP_SERVICE_SKU --is-linux"
+echo "   This may take several minutes..."
+
+# Run the command with timeout to prevent indefinite hanging
+timeout 300 az appservice plan create \
     --name $APP_SERVICE_PLAN \
     --resource-group $RESOURCE_GROUP \
     --location $LOCATION \
     --sku $APP_SERVICE_SKU \
-    --is-linux 2>&1)
+    --is-linux > /tmp/asp_output.log 2>&1
 ASP_EXIT_CODE=$?
+
+# Read the output
+ASP_OUTPUT=$(cat /tmp/asp_output.log)
+
+# Check if command timed out
+if [ $ASP_EXIT_CODE -eq 124 ]; then
+    echo "❌ App Service Plan creation timed out after 5 minutes"
+    echo "This might indicate network issues or Azure service problems"
+    echo "You can try running the script again or check Azure portal"
+    exit 1
+fi
 
 if [ $ASP_EXIT_CODE -eq 0 ]; then
     echo "✅ App Service Plan creation initiated"
@@ -789,16 +820,17 @@ else
     echo "$ASP_OUTPUT"
     echo ""
     echo "This could be due to:"
-    echo "   - Insufficient quota in the subscription"
+    echo "   - Insufficient quota in the subscription"  
     echo "   - Linux App Service Plans not available in $LOCATION"
     echo "   - Name conflict (unlikely with timestamp suffix)"
-    echo "   - SKU S1 not available in this region/subscription"
+    echo "   - SKU $APP_SERVICE_SKU not available in this region/subscription"
+    echo "   - Network connectivity issues"
     echo ""
     echo "Checking existing plans in the resource group..."
     az appservice plan list --resource-group $RESOURCE_GROUP -o table || true
     echo ""
     echo "Checking available SKUs in $LOCATION..."
-    az appservice list-locations --sku S1 --linux-workers-enabled --query "[?contains(name, '$LOCATION')]" -o table || true
+    az appservice list-locations --sku $APP_SERVICE_SKU --linux-workers-enabled --query "[?contains(name, '$LOCATION')]" -o table || true
     exit 1
 fi
 fi
