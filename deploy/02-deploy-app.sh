@@ -352,40 +352,12 @@ EOF
     else
         DEPLOY_EXIT_CODE=$?
         if [ $DEPLOY_EXIT_CODE -eq 124 ]; then
-            echo "⏰ Backend deployment timed out after 5 minutes"
+            echo "❌ Backend deployment timed out after 5 minutes"
         else
             echo "❌ Backend deployment failed with exit code: $DEPLOY_EXIT_CODE"
         fi
-        
-        echo ""
-        echo "⚠️ DEPLOYMENT ISSUES DETECTED"
-        echo "============================="
-        echo "The backend deployment encountered issues, but the script will continue"
-        echo "with automatic fallback measures and runtime dependency installation."
-        echo ""
-        echo "🔧 Applying automatic fixes:"
-        echo "   - Setting up runtime dependency installation"
-        echo "   - Configuring fallback startup procedures"
-        echo "   - The application should still start successfully"
-        echo ""
-        
-        # Apply simple startup fix automatically and restart app
-        echo "🔧 Fixing app startup and ensuring it's running..."
-        
-        # Set simple startup command
-        az webapp config set \
-            --name $BACKEND_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --startup-file "python run_app.py"
-        
-        # Restart to apply new settings and ensure app is running
-        echo "🔄 Restarting with new configuration..."
-        az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
-        
-        # Wait for restart to complete
-        sleep 20
-        
-        echo "✅ Automatic startup fix applied - app should be running..."
+        echo "Please check the deployment logs for more details."
+        exit 1
     fi
     
     # Wait for backend build and start
@@ -606,6 +578,65 @@ echo "⚙️  Configuring application settings..."
 BACKEND_URL="https://$BACKEND_APP_NAME.azurewebsites.net"
 FRONTEND_URL="https://$FRONTEND_APP_NAME.azurewebsites.net"
 
+# Step: Configure OpenAI Service (if available)
+echo "🧠 Detecting and configuring Azure OpenAI service..."
+
+# Auto-detect OpenAI service if not set or if service doesn't exist
+if [ -z "$OPENAI_SERVICE" ] || ! az cognitiveservices account show --name "$OPENAI_SERVICE" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "🔍 Auto-detecting OpenAI service in resource group..."
+    
+    # Find OpenAI service by kind
+    DETECTED_OPENAI=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].name" -o tsv 2>/dev/null)
+    
+    if [ -n "$DETECTED_OPENAI" ] && [ "$DETECTED_OPENAI" != "" ]; then
+        echo "✅ Found OpenAI service: $DETECTED_OPENAI"
+        export OPENAI_SERVICE="$DETECTED_OPENAI"
+    else
+        echo "⚠️  No OpenAI service found in resource group: $RESOURCE_GROUP"
+        echo "   The application will run in basic mode without AI features"
+        export OPENAI_SERVICE=""
+        export OPENAI_UNAVAILABLE=true
+    fi
+fi
+
+# Configure OpenAI settings if service is available
+if [ -n "$OPENAI_SERVICE" ] && [ "$OPENAI_UNAVAILABLE" != "true" ]; then
+    echo "🔧 Configuring OpenAI service: $OPENAI_SERVICE"
+    
+    # Get OpenAI endpoint
+    OPENAI_ENDPOINT=$(az cognitiveservices account show --name "$OPENAI_SERVICE" --resource-group "$RESOURCE_GROUP" --query "properties.endpoint" -o tsv 2>/dev/null)
+    
+    # Get OpenAI key
+    OPENAI_KEY=$(az cognitiveservices account keys list --name "$OPENAI_SERVICE" --resource-group "$RESOURCE_GROUP" --query "key1" -o tsv 2>/dev/null)
+    
+    # Detect GPT deployment
+    GPT_DEPLOYMENT=$(az cognitiveservices account deployment list --name "$OPENAI_SERVICE" --resource-group "$RESOURCE_GROUP" --query "[?contains(model.name, 'gpt')][0].name" -o tsv 2>/dev/null)
+    
+    # Detect embedding deployment
+    EMBEDDING_DEPLOYMENT=$(az cognitiveservices account deployment list --name "$OPENAI_SERVICE" --resource-group "$RESOURCE_GROUP" --query "[?contains(model.name, 'embedding')][0].name" -o tsv 2>/dev/null)
+    
+    echo "   OpenAI Endpoint: $OPENAI_ENDPOINT"
+    echo "   GPT Deployment: ${GPT_DEPLOYMENT:-'Not found'}"
+    echo "   Embedding Deployment: ${EMBEDDING_DEPLOYMENT:-'Not found'}"
+    
+    # Set defaults if deployments not found
+    if [ -z "$GPT_DEPLOYMENT" ]; then
+        echo "   ⚠️  No GPT deployment found, using default: gpt-4o-mini"
+        GPT_DEPLOYMENT="gpt-4o-mini"
+    fi
+    
+    if [ -z "$EMBEDDING_DEPLOYMENT" ]; then
+        echo "   ⚠️  No embedding deployment found, using default: text-embedding-3-large"
+        EMBEDDING_DEPLOYMENT="text-embedding-3-large"
+    fi
+else
+    echo "⚠️  OpenAI service not available - app will run in basic mode"
+    OPENAI_ENDPOINT=""
+    OPENAI_KEY=""
+    GPT_DEPLOYMENT=""
+    EMBEDDING_DEPLOYMENT=""
+fi
+
 # Configure backend app settings for native Python deployment (optimized for Oryx build)
 echo "🔧 Configuring backend application settings..."
 az webapp config appsettings set \
@@ -615,10 +646,21 @@ az webapp config appsettings set \
         AZURE_STORAGE_ACCOUNT="$STORAGE_ACCOUNT" \
         AZURE_STORAGE_CONTAINER="${STORAGE_CONTAINER:-content}" \
         AZURE_SEARCH_SERVICE="$SEARCH_SERVICE" \
+        AZURE_SEARCH_INDEX="gptkbindex" \
         AZURE_OPENAI_SERVICE="$OPENAI_SERVICE" \
+        AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
+        AZURE_OPENAI_API_KEY="$OPENAI_KEY" \
+        AZURE_OPENAI_CHATGPT_DEPLOYMENT="$GPT_DEPLOYMENT" \
+        AZURE_OPENAI_EMB_DEPLOYMENT="$EMBEDDING_DEPLOYMENT" \
+        OPENAI_HOST="azure" \
         AZURE_COSMOSDB_ACCOUNT="$COSMOS_ACCOUNT" \
+        AZURE_COSMOSDB_ENDPOINT="https://$COSMOS_ACCOUNT.documents.azure.com:443/" \
         AZURE_COSMOSDB_DATABASE="${COSMOS_DATABASE:-chathistory}" \
         AZURE_COSMOSDB_CONTAINER="${COSMOS_CONTAINER:-chatcontainer}" \
+        AZURE_CHAT_HISTORY_DATABASE="${COSMOS_DATABASE:-chathistory}" \
+        AZURE_CHAT_HISTORY_CONTAINER="${COSMOS_CONTAINER:-chatcontainer}" \
+        AZURE_CHAT_HISTORY_VERSION="1" \
+        USE_CHAT_HISTORY_COSMOS="true" \
         WEBSITE_HTTPLOGGING_RETENTION_DAYS="7" \
         SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
         ENABLE_ORYX_BUILD="true" \
