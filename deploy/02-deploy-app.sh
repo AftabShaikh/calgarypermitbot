@@ -459,7 +459,7 @@ EOF
     "express": "^4.18.2"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=20.0.0"
   }
 }
 EOF
@@ -490,6 +490,14 @@ EOF
     echo "🚀 Deploying frontend to Azure App Service..."
     cd /tmp/frontend-deploy
     zip -r ../frontend-deploy.zip .
+    
+    # Configure frontend runtime and startup command BEFORE deployment
+    echo "🔧 Configuring frontend runtime and startup command..."
+    az webapp config set \
+        --name $FRONTEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --linux-fx-version "NODE|20-lts" \
+        --startup-file "npm install && node server.js"
     
     # Function to deploy frontend with timeout
     deploy_frontend() {
@@ -679,7 +687,9 @@ az webapp config appsettings set \
     --settings \
         BACKEND_URL="$BACKEND_URL" \
         NODE_ENV="production" \
-        WEBSITE_NODE_DEFAULT_VERSION="22-lts"
+        WEBSITE_NODE_DEFAULT_VERSION="20-lts" \
+        SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+        WEBSITE_RUN_FROM_PACKAGE="0"
 
 # Step 5: Run data preprocessing (create search index)
 echo "🔍 Setting up search index and processing documents..."

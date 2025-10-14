@@ -140,7 +140,7 @@ EOF
     "express": "^4.18.2"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=20.0.0"
   }
 }
 EOF
@@ -172,15 +172,26 @@ EOF
     cd /tmp/frontend-deploy
     zip -r ../frontend-deploy.zip .
     
-    # Configure frontend app settings first
-    echo "🔧 Configuring frontend application settings..."
+    # Configure frontend app settings and runtime
+    echo "🔧 Configuring frontend application settings and runtime..."
+    
+    # Set Node.js runtime first
+    az webapp config set \
+        --name $FRONTEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --linux-fx-version "NODE|20-lts" \
+        --startup-file "npm install && node server.js"
+    
+    # Set app settings
     az webapp config appsettings set \
         --name $FRONTEND_APP_NAME \
         --resource-group $RESOURCE_GROUP \
         --settings \
             BACKEND_URL="$BACKEND_URL" \
             NODE_ENV="production" \
-            WEBSITE_NODE_DEFAULT_VERSION="22-lts"
+            WEBSITE_NODE_DEFAULT_VERSION="20-lts" \
+            SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+            WEBSITE_RUN_FROM_PACKAGE="0"
     
     # Function to deploy frontend with timeout
     deploy_frontend() {
