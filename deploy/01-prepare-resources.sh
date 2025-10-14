@@ -1227,21 +1227,115 @@ echo "============================================"
 # Step 15: Configure Backend App Settings
 echo "⚙️  Configuring backend app settings..."
 
+# Debug: Show current resource names
+echo "   🔍 Current resource variables:"
+echo "      STORAGE_ACCOUNT: $STORAGE_ACCOUNT"
+echo "      SEARCH_SERVICE: $SEARCH_SERVICE"
+echo "      OPENAI_SERVICE: $OPENAI_SERVICE"
+echo "      COSMOS_ACCOUNT: $COSMOS_ACCOUNT"
+echo "      BACKEND_APP_NAME: $BACKEND_APP_NAME"
+echo ""
+
+# Fallback: Re-detect resources if variables are empty or resources don't exist
+echo "   🔄 Verifying and re-detecting resources if needed..."
+
+# Re-detect storage account if variable is empty or resource doesn't exist
+if [ -z "$STORAGE_ACCOUNT" ] || ! az storage account show --name "$STORAGE_ACCOUNT" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "   🔍 Re-detecting storage account..."
+    STORAGE_ACCOUNT=$(find_existing_resource "storage")
+    if [ -n "$STORAGE_ACCOUNT" ]; then
+        echo "   ✅ Found storage account: $STORAGE_ACCOUNT"
+        export STORAGE_ACCOUNT
+    fi
+fi
+
+# Re-detect search service if variable is empty or resource doesn't exist
+if [ -z "$SEARCH_SERVICE" ] || ! az search service show --name "$SEARCH_SERVICE" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "   🔍 Re-detecting search service..."
+    SEARCH_SERVICE=$(find_existing_resource "search")
+    if [ -n "$SEARCH_SERVICE" ]; then
+        echo "   ✅ Found search service: $SEARCH_SERVICE"
+        export SEARCH_SERVICE
+    fi
+fi
+
+# Re-detect OpenAI service if variable is empty or resource doesn't exist
+if [ -z "$OPENAI_SERVICE" ] || ! az cognitiveservices account show --name "$OPENAI_SERVICE" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "   🔍 Re-detecting OpenAI service..."
+    OPENAI_SERVICE=$(find_existing_resource "openai")
+    if [ -n "$OPENAI_SERVICE" ]; then
+        echo "   ✅ Found OpenAI service: $OPENAI_SERVICE"
+        export OPENAI_SERVICE
+    else
+        echo "   ⚠️  No OpenAI service found - continuing without it"
+        export OPENAI_UNAVAILABLE=true
+    fi
+fi
+
+# Re-detect Cosmos DB account if variable is empty or resource doesn't exist
+if [ -z "$COSMOS_ACCOUNT" ] || ! az cosmosdb show --name "$COSMOS_ACCOUNT" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "   🔍 Re-detecting Cosmos DB account..."
+    COSMOS_ACCOUNT=$(find_existing_resource "cosmos")
+    if [ -n "$COSMOS_ACCOUNT" ]; then
+        echo "   ✅ Found Cosmos DB account: $COSMOS_ACCOUNT"
+        export COSMOS_ACCOUNT
+    fi
+fi
+
+# Re-detect backend web app if variable is empty or resource doesn't exist
+if [ -z "$BACKEND_APP_NAME" ] || ! az webapp show --name "$BACKEND_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "   🔍 Re-detecting backend web app..."
+    BACKEND_APP_NAME=$(find_existing_resource "webapp-backend")
+    if [ -n "$BACKEND_APP_NAME" ]; then
+        echo "   ✅ Found backend web app: $BACKEND_APP_NAME"
+        export BACKEND_APP_NAME
+    fi
+fi
+
+echo "   ✅ Resource verification completed"
+echo ""
+
 # Get connection information
 echo "   Getting service endpoints..."
-STORAGE_CONNECTION=$(az storage account show-connection-string --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query connectionString -o tsv)
-SEARCH_ENDPOINT=$(az search service show --name $SEARCH_SERVICE --resource-group $RESOURCE_GROUP --query hostName -o tsv)
+
+# Get storage connection string
+echo "   📦 Getting storage connection..."
+if ! STORAGE_CONNECTION=$(az storage account show-connection-string --name $STORAGE_ACCOUNT --resource-group $RESOURCE_GROUP --query connectionString -o tsv 2>/dev/null); then
+    echo "   ❌ Error: Storage account '$STORAGE_ACCOUNT' not found or not accessible"
+    exit 1
+fi
+
+# Get search endpoint
+echo "   🔍 Getting search service endpoint..."
+if ! SEARCH_ENDPOINT=$(az search service show --name $SEARCH_SERVICE --resource-group $RESOURCE_GROUP --query hostName -o tsv 2>/dev/null); then
+    echo "   ❌ Error: Search service '$SEARCH_SERVICE' not found or not accessible"
+    echo "   💡 This might happen if:"
+    echo "      • Search service creation failed earlier"
+    echo "      • Variable assignment issue"
+    echo "      • Resource was created with a different name"
+    exit 1
+fi
 
 # Get OpenAI endpoint only if service exists
+echo "   🧠 Getting OpenAI service endpoint..."
 if [ -n "$OPENAI_SERVICE" ] && [ "$OPENAI_UNAVAILABLE" != "true" ]; then
-    OPENAI_ENDPOINT=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query properties.endpoint -o tsv)
-    echo "   OpenAI Endpoint: $OPENAI_ENDPOINT"
+    if ! OPENAI_ENDPOINT=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query properties.endpoint -o tsv 2>/dev/null); then
+        echo "   ⚠️  Warning: OpenAI service '$OPENAI_SERVICE' not found, continuing without it"
+        OPENAI_ENDPOINT=""
+    else
+        echo "   OpenAI Endpoint: $OPENAI_ENDPOINT"
+    fi
 else
     OPENAI_ENDPOINT=""
     echo "   OpenAI Endpoint: [Not available - requires access approval]"
 fi
 
-COSMOS_ENDPOINT=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query documentEndpoint -o tsv)
+# Get Cosmos DB endpoint
+echo "   🗄️  Getting Cosmos DB endpoint..."
+if ! COSMOS_ENDPOINT=$(az cosmosdb show --name $COSMOS_ACCOUNT --resource-group $RESOURCE_GROUP --query documentEndpoint -o tsv 2>/dev/null); then
+    echo "   ❌ Error: Cosmos DB account '$COSMOS_ACCOUNT' not found or not accessible"
+    exit 1
+fi
 
 echo "   Storage Connection: [hidden for security]"
 echo "   Search Endpoint: https://$SEARCH_ENDPOINT"
