@@ -424,13 +424,33 @@ create_openai_service() {
     
     while [ $attempt -le $max_attempts ]; do
         echo "   Attempt $attempt/$max_attempts: Creating OpenAI service '$service_name'..."
+        echo "   ⏱️  This may take several minutes..."
         
-        ERROR_OUTPUT=$(az cognitiveservices account create \
-            --name "$service_name" \
-            --resource-group "$RESOURCE_GROUP" \
-            --location "$LOCATION" \
-            --kind OpenAI \
-            --sku S0 2>&1 || true)
+        # Use timeout command if available
+        if command -v timeout >/dev/null 2>&1; then
+            ERROR_OUTPUT=$(timeout 180 az cognitiveservices account create \
+                --name "$service_name" \
+                --resource-group "$RESOURCE_GROUP" \
+                --location "$LOCATION" \
+                --kind OpenAI \
+                --sku S0 2>&1 || true)
+            CREATE_EXIT_CODE=$?
+        else
+            ERROR_OUTPUT=$(az cognitiveservices account create \
+                --name "$service_name" \
+                --resource-group "$RESOURCE_GROUP" \
+                --location "$LOCATION" \
+                --kind OpenAI \
+                --sku S0 2>&1 || true)
+            CREATE_EXIT_CODE=$?
+        fi
+        
+        # Check if the command timed out
+        if [ $CREATE_EXIT_CODE -eq 124 ]; then
+            echo "   ⏰ OpenAI service creation timed out after 3 minutes"
+            echo "   This might indicate network issues or Azure service problems"
+            return 1
+        fi
         
         if echo "$ERROR_OUTPUT" | grep -q "SpecialFeatureOrQuotaIdRequired\|QuotaId.*required"; then
             echo "   ⚠️  Azure OpenAI access not available for this subscription"
@@ -530,6 +550,8 @@ if [ -n "$EXISTING_OPENAI" ] && [ "$EXISTING_OPENAI" != "" ]; then
     DEPLOY_MODELS=true
 else
     echo "   No existing OpenAI service found, creating: $OPENAI_SERVICE"
+    echo "   💡 Note: OpenAI service creation may take several minutes"
+    echo "   🔄 Starting OpenAI service creation..."
     OPENAI_RESULT=$(create_openai_service "$OPENAI_SERVICE")
     OPENAI_EXIT_CODE=$?
 fi
@@ -537,13 +559,27 @@ fi
 if [ $OPENAI_EXIT_CODE -eq 0 ]; then
     echo "✅ OpenAI Service creation initiated"
     
-    # Wait for OpenAI Service to be ready
+    # Wait for OpenAI Service to be ready with timeout protection
     echo "⏳ Checking OpenAI Service status..."
+    echo "   💡 If this hangs, press Ctrl+C and create the OpenAI service manually"
     TIMEOUT=300  # 5 minutes max
     COUNTER=0
     
     while [ $COUNTER -lt $TIMEOUT ]; do
-        STATUS=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+        # Use timeout command for the Azure CLI call to prevent hanging
+        if command -v timeout >/dev/null 2>&1; then
+            STATUS=$(timeout 30 az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+            STATUS_EXIT_CODE=$?
+        else
+            STATUS=$(az cognitiveservices account show --name $OPENAI_SERVICE --resource-group $RESOURCE_GROUP --query "provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+            STATUS_EXIT_CODE=$?
+        fi
+        
+        # Check if the command timed out
+        if [ $STATUS_EXIT_CODE -eq 124 ]; then
+            echo "   ⏰ Azure CLI call timed out - continuing anyway..."
+            STATUS="Timeout"
+        fi
         
         echo "   🔍 OpenAI status: '$STATUS' (${COUNTER}s elapsed)"
         
@@ -551,21 +587,46 @@ if [ $OPENAI_EXIT_CODE -eq 0 ]; then
             echo "✅ OpenAI Service is ready (took ${COUNTER}s)"
             break
         elif [ "$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')" = "failed" ]; then
-            echo "❌ OpenAI Service creation failed"
+            echo "❌ OpenAI Service creation failed during provisioning"
+            echo ""
+            echo "📋 Manual OpenAI Service Creation Steps:"
+            echo "   1. Go to Azure Portal: https://portal.azure.com"
+            echo "   2. Navigate to resource group: $RESOURCE_GROUP"
+            echo "   3. Click '+ Create' → Search 'Azure OpenAI'"
+            echo "   4. Create with name: $OPENAI_SERVICE"
+            echo "   5. Re-run this script after creation"
             exit 1
         elif [ "$STATUS" = "NotFound" ]; then
             echo "   ⏳ OpenAI Service not found yet, still creating..."
+        elif [ "$STATUS" = "Timeout" ]; then
+            echo "   ⏰ Status check timed out, but continuing..."
         else
             echo "   🧠 Status: $STATUS - continuing to wait..."
         fi
         
         sleep 15
         COUNTER=$((COUNTER + 15))
+        
+        # Add progress indicator every minute
+        if [ $((COUNTER % 60)) -eq 0 ] && [ $COUNTER -gt 0 ]; then
+            echo "   📊 Still waiting for OpenAI service... (${COUNTER}s / ${TIMEOUT}s)"
+        fi
     done
     
     if [ $COUNTER -ge $TIMEOUT ]; then
         echo "❌ Timeout waiting for OpenAI Service creation (${TIMEOUT}s)"
-        exit 1
+        echo ""
+        echo "📋 Manual OpenAI Service Creation Steps:"
+        echo "   1. Go to Azure Portal: https://portal.azure.com"
+        echo "   2. Navigate to resource group: $RESOURCE_GROUP"
+        echo "   3. Click '+ Create' → Search 'Azure OpenAI'"
+        echo "   4. Create with name: $OPENAI_SERVICE"
+        echo "   5. Deploy models: gpt-4o-mini and text-embedding-3-large"
+        echo "   6. Re-run this script after creation"
+        echo ""
+        echo "💡 The script will continue without OpenAI service for now"
+        export OPENAI_UNAVAILABLE=true
+        DEPLOY_MODELS=false
     fi
     
     # Step 6: Deploy OpenAI Models (wait for each model)
