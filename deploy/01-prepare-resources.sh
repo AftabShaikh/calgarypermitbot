@@ -156,7 +156,36 @@ find_existing_resource() {
             ;;
         "openai")
             # Find any cognitive services account with kind=OpenAI in the resource group
-            az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].name" -o tsv 2>/dev/null
+            # Try multiple variations to handle different possible kind values
+            local result=""
+            
+            # Try exact match first (this should work for your service)
+            result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].name" -o tsv 2>/dev/null)
+            
+            # If not found, try case insensitive match
+            if [ -z "$result" ]; then
+                result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?tolower(kind)=='openai'][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # If not found, try contains match for kind field
+            if [ -z "$result" ]; then
+                result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(kind), 'openai')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # If still not found, try looking for services that might be OpenAI but with different kind values
+            if [ -z "$result" ]; then
+                # Some Azure OpenAI services might have kind as 'CognitiveServices' 
+                # Check if any service has OpenAI in the name
+                result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'openai')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # Final fallback: look for any cognitive service that might be OpenAI based on common naming patterns
+            if [ -z "$result" ]; then
+                # Look for services with 'gpt', 'ai', or other AI-related terms that might be OpenAI
+                result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'gpt') || contains(tolower(name), 'ai-') || contains(tolower(name), '-ai')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            echo "$result"
             ;;
         "openai-deployment-gpt")
             # Find GPT model deployment in the specified OpenAI service
@@ -541,11 +570,45 @@ create_openai_service() {
 }
 
 # Check if any OpenAI service already exists in the resource group
+echo "   🔍 Searching for existing OpenAI services in resource group..."
+
+# Debug: List all cognitive services first
+echo "   📋 All cognitive services in resource group:"
+COGNITIVE_SERVICES_LIST=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].{name:name, kind:kind, location:location}" -o table 2>/dev/null)
+if [ -n "$COGNITIVE_SERVICES_LIST" ]; then
+    echo "$COGNITIVE_SERVICES_LIST"
+else
+    echo "   No cognitive services found or command failed"
+fi
+
+echo "   🔍 Testing different OpenAI detection methods..."
 EXISTING_OPENAI=$(find_existing_resource "openai")
+echo "   🔍 OpenAI detection result: '$EXISTING_OPENAI'"
+
+# Additional manual verification if detection failed
+if [ -z "$EXISTING_OPENAI" ]; then
+    echo "   🔍 Manual verification: checking for services with 'openai' in name..."
+    MANUAL_CHECK=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'openai')].name" -o tsv 2>/dev/null)
+    if [ -n "$MANUAL_CHECK" ]; then
+        echo "   ⚠️  Found service(s) with 'openai' in name: $MANUAL_CHECK"
+        echo "   This might be your OpenAI service with unexpected metadata"
+    fi
+fi
+
 if [ -n "$EXISTING_OPENAI" ] && [ "$EXISTING_OPENAI" != "" ]; then
     echo "✅ Found existing OpenAI Service '$EXISTING_OPENAI' - skipping creation"
     export OPENAI_SERVICE="$EXISTING_OPENAI"
     echo "   Using existing: $OPENAI_SERVICE"
+    echo "   Original config name: $(echo $OPENAI_SERVICE | head -c 30)... → Updated to: $EXISTING_OPENAI"
+    OPENAI_EXIT_CODE=0
+    DEPLOY_MODELS=true
+elif [ -n "$MANUAL_CHECK" ]; then
+    # Use the first service found in manual check
+    MANUAL_OPENAI=$(echo "$MANUAL_CHECK" | head -n1)
+    echo "✅ Using manually detected OpenAI service '$MANUAL_OPENAI'"
+    export OPENAI_SERVICE="$MANUAL_OPENAI"
+    echo "   Using manually detected: $OPENAI_SERVICE"
+    echo "   Original config name: $(echo ${OPENAI_SERVICE:-'not set'} | head -c 30)... → Updated to: $MANUAL_OPENAI"
     OPENAI_EXIT_CODE=0
     DEPLOY_MODELS=true
 else
