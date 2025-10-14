@@ -262,13 +262,6 @@ EOF
         --resource-group $RESOURCE_GROUP \
         --linux-fx-version "PYTHON|3.11"
     
-    # Set simple startup command to avoid crashes
-    echo "🔧 Setting simple startup command..."
-    az webapp config set \
-        --name $BACKEND_APP_NAME \
-        --resource-group $RESOURCE_GROUP \
-        --startup-file "python run_app.py"
-    
     # Prepare for clean deployment without stopping the app
     echo "🔄 Preparing for clean deployment..."
     
@@ -289,6 +282,13 @@ EOF
     echo "   Note: You can press Ctrl+C to interrupt if it gets stuck"
     if deploy_backend; then
         echo "✅ Backend deployed successfully"
+        
+        # Set startup command after successful deployment
+        echo "🔧 Setting startup command after deployment..."
+        az webapp config set \
+            --name $BACKEND_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --startup-file "python run_app.py"
         
         # Restart app to ensure it's running with new deployment
         echo "🔄 Restarting app to apply new deployment..."
