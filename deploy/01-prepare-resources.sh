@@ -162,13 +162,13 @@ find_existing_resource() {
         "cosmos-database")
             # Find chathistory database in the specified Cosmos DB account
             if [ -n "$cosmos_account" ]; then
-                az cosmosdb sql database list --account-name "$cosmos_account" --resource-group "$RESOURCE_GROUP" --query "[?id=='chathistory'].id" -o tsv 2>/dev/null
+                az cosmosdb sql database list --account-name "$cosmos_account" --resource-group "$RESOURCE_GROUP" --query "[?name=='chathistory'].name" -o tsv 2>/dev/null
             fi
             ;;
         "cosmos-container")
             # Find chatcontainer in the specified Cosmos DB account
             if [ -n "$cosmos_account" ]; then
-                az cosmosdb sql container list --account-name "$cosmos_account" --database-name "chathistory" --resource-group "$RESOURCE_GROUP" --query "[?id=='chatcontainer'].id" -o tsv 2>/dev/null
+                az cosmosdb sql container list --account-name "$cosmos_account" --database-name "chathistory" --resource-group "$RESOURCE_GROUP" --query "[?name=='chatcontainer'].name" -o tsv 2>/dev/null
             fi
             ;;
         "appplan")
@@ -742,7 +742,7 @@ fi
 
 # Step 8: Create Cosmos DB database and container
 echo "📊 Checking for existing Cosmos DB database..."
-EXISTING_DB=$(find_existing_resource "cosmos-database" "$COSMOS_ACCOUNT")
+EXISTING_DB=$(find_existing_resource "cosmos-database" "" "$COSMOS_ACCOUNT")
 if [ -n "$EXISTING_DB" ] && [ "$EXISTING_DB" != "" ]; then
     echo "✅ Found existing Cosmos DB database 'chathistory' - skipping creation"
 else
@@ -759,7 +759,7 @@ else
 fi
 
 echo "📋 Checking for existing Cosmos DB container..."
-EXISTING_CONTAINER=$(find_existing_resource "cosmos-container" "$COSMOS_ACCOUNT")
+EXISTING_CONTAINER=$(find_existing_resource "cosmos-container" "" "$COSMOS_ACCOUNT")
 if [ -n "$EXISTING_CONTAINER" ] && [ "$EXISTING_CONTAINER" != "" ]; then
     echo "✅ Found existing Cosmos DB container 'chatcontainer' - skipping creation"
 else
