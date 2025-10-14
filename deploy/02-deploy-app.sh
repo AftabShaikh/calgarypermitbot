@@ -9,25 +9,33 @@ set -e  # Exit on any error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Load configuration from preparation script
+# Load base configuration first (for any missing variables)
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    source "$SCRIPT_DIR/config.sh"
+fi
+
+# Load configuration from preparation script (this takes precedence)
 if [ -f /tmp/deployment-config.env ]; then
     source /tmp/deployment-config.env
     echo "📋 Loaded configuration from preparation script"
+    echo "✅ Configuration loaded successfully"
+    echo "📍 Location: $LOCATION"
+    echo "🏗️  Resource Group: $RESOURCE_GROUP"
+    echo "💰 App Service SKU: $APP_SERVICE_SKU"
 else
     echo "❌ Configuration not found. Please run 01-prepare-resources.sh first"
     exit 1
 fi
 
-# Load additional configuration if available
-if [ -f "$SCRIPT_DIR/config.sh" ]; then
-    source "$SCRIPT_DIR/config.sh"
-fi
-
 echo "🚀 Starting Calgary Permit Bot Application Deployment"
 echo "====================================================="
-echo "Backend App: $BACKEND_APP_NAME"
-echo "Frontend App: $FRONTEND_APP_NAME"
-echo "Storage Account: $STORAGE_ACCOUNT"
+echo "📋 Using detected/configured resources:"
+echo "   Backend App: $BACKEND_APP_NAME"
+echo "   Frontend App: $FRONTEND_APP_NAME"
+echo "   Storage Account: $STORAGE_ACCOUNT"
+echo "   Search Service: $SEARCH_SERVICE"
+echo "   OpenAI Service: $OPENAI_SERVICE"
+echo "   Cosmos DB: $COSMOS_ACCOUNT"
 echo ""
 
 # Validate that required resources exist
