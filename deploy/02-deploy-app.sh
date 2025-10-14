@@ -181,6 +181,23 @@ EOF
         exit 1
     fi
     echo "✅ Using existing requirements.txt for deployment"
+    
+    # Add Oryx build detection files to ensure proper build
+    echo "🔧 Adding Oryx build detection files..."
+    echo "python" > .oryx_env_type
+    echo "3.11" > .python-version
+    
+    # Create a simple build script to force Oryx recognition
+    cat > build.sh << 'EOF'
+#!/bin/bash
+echo "Oryx build starting..."
+python --version
+pip --version
+echo "Installing requirements..."
+pip install -r requirements.txt
+echo "Build completed"
+EOF
+    chmod +x build.sh
 
     # Verify startup.py exists
     if [ ! -f "startup.py" ]; then
@@ -234,7 +251,9 @@ EOF
             ORYX_PYTHON_VERSION="3.11" \
             PRE_BUILD_SCRIPT_PATH="" \
             POST_BUILD_SCRIPT_PATH="" \
-            DISABLE_COLLECTSTATIC="1"
+            DISABLE_COLLECTSTATIC="1" \
+            WEBSITE_RUN_FROM_PACKAGE="0" \
+            WEBSITE_ENABLE_SYNC_UPDATE_SITE="true"
     
     # Configure Python runtime
     echo "🔧 Setting Python runtime version..."
@@ -254,9 +273,15 @@ EOF
     echo "🔄 Preparing app for clean deployment..."
     az webapp stop --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
     
-    # Clear any existing deployment artifacts  
-    echo "🧹 Clearing deployment cache..."
+    # Clear any existing deployment artifacts and cached builds
+    echo "🧹 Clearing deployment cache and forcing fresh build..."
     az webapp deployment source delete --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null || true
+    
+    # Reset deployment settings to force clean slate
+    az webapp config appsettings delete \
+        --name $BACKEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --setting-names WEBSITE_SKIP_AUTOCONFIGURE_STATICFILES WEBSITE_DISABLE_SCM_SEPARATION 2>/dev/null || true
     
     # Restart to apply configuration changes
     echo "🔄 Restarting app to apply configuration changes..."
@@ -278,7 +303,23 @@ EOF
         
         # Wait for deployment to complete and check if dependencies were installed
         echo "⏳ Waiting for deployment to complete..."
-        sleep 30
+        sleep 45
+        
+        # Check deployment logs for build success
+        echo "🔍 Checking deployment logs for build status..."
+        RECENT_DEPLOYMENT_LOGS=$(az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null | tail -30 || echo "")
+        
+        if echo "$RECENT_DEPLOYMENT_LOGS" | grep -q "virtual environment directory.*antenv"; then
+            echo "✅ Virtual environment detected in logs"
+        else
+            echo "⚠️ No virtual environment found in deployment logs"
+        fi
+        
+        if echo "$RECENT_DEPLOYMENT_LOGS" | grep -q "Installing.*requirements"; then
+            echo "✅ Requirements installation detected in logs"
+        else
+            echo "⚠️ No requirements installation found in deployment logs"
+        fi
         
         # Check if the app is responding and has dependencies
         echo "🔍 Checking backend health..."
