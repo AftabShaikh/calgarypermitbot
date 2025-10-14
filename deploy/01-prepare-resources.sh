@@ -155,34 +155,70 @@ find_existing_resource() {
             az search service list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null
             ;;
         "openai")
-            # Find any cognitive services account with kind=OpenAI in the resource group
-            # Try multiple variations to handle different possible kind values
+            # Find any cognitive services account that could be OpenAI
             local result=""
             
-            # Try exact match first (this should work for your service)
+            # Method 1: Try exact kind match (most reliable)
             result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].name" -o tsv 2>/dev/null)
             
-            # If not found, try case insensitive match
+            # Method 2: Try case insensitive kind match
             if [ -z "$result" ]; then
                 result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?tolower(kind)=='openai'][0].name" -o tsv 2>/dev/null)
             fi
             
-            # If not found, try contains match for kind field
+            # Method 3: Look for kind containing 'openai'
             if [ -z "$result" ]; then
                 result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(kind), 'openai')][0].name" -o tsv 2>/dev/null)
             fi
             
-            # If still not found, try looking for services that might be OpenAI but with different kind values
+            # Method 4: Check by service properties - look for services with OpenAI models
             if [ -z "$result" ]; then
-                # Some Azure OpenAI services might have kind as 'CognitiveServices' 
-                # Check if any service has OpenAI in the name
+                # Get all cognitive services and check if any have OpenAI capabilities
+                local services=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+                for service in $services; do
+                    if az cognitiveservices account deployment list --name "$service" --resource-group "$RESOURCE_GROUP" --query "[?contains(model.name, 'gpt') || contains(model.name, 'embedding')]" -o tsv 2>/dev/null | grep -q .; then
+                        result="$service"
+                        break
+                    fi
+                done
+            fi
+            
+            # Method 5: Look for services with 'openai' in name
+            if [ -z "$result" ]; then
                 result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'openai')][0].name" -o tsv 2>/dev/null)
             fi
             
-            # Final fallback: look for any cognitive service that might be OpenAI based on common naming patterns
+            # Method 6: Look for cognitive services with AI-related naming patterns
             if [ -z "$result" ]; then
-                # Look for services with 'gpt', 'ai', or other AI-related terms that might be OpenAI
-                result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'gpt') || contains(tolower(name), 'ai-') || contains(tolower(name), '-ai')][0].name" -o tsv 2>/dev/null)
+                result=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'gpt') || contains(tolower(name), 'ai-') || contains(tolower(name), '-ai') || contains(tolower(name), 'chat')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # Method 7: Check for OpenAI endpoint patterns
+            if [ -z "$result" ]; then
+                local services=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+                for service in $services; do
+                    local endpoint=$(az cognitiveservices account show --name "$service" --resource-group "$RESOURCE_GROUP" --query "properties.endpoint" -o tsv 2>/dev/null)
+                    if echo "$endpoint" | grep -qi "openai"; then
+                        result="$service"
+                        break
+                    fi
+                done
+            fi
+            
+            # Method 8: Final fallback - check if service supports OpenAI API format
+            if [ -z "$result" ]; then
+                local services=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+                for service in $services; do
+                    # Try to get keys - if successful, check if it's an OpenAI service by examining its capabilities
+                    if az cognitiveservices account keys list --name "$service" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+                        # Check if service has typical OpenAI model capabilities
+                        local capabilities=$(az cognitiveservices account show --name "$service" --resource-group "$RESOURCE_GROUP" --query "properties.capabilities" -o json 2>/dev/null || echo "[]")
+                        if echo "$capabilities" | grep -qi "openai\|gpt\|completion\|embedding"; then
+                            result="$service"
+                            break
+                        fi
+                    fi
+                done
             fi
             
             echo "$result"
@@ -220,12 +256,81 @@ find_existing_resource() {
             az appservice plan list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null
             ;;
         "webapp-backend")
-            # Find backend web app (Python runtime)
-            az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(siteConfig.linuxFxVersion, 'PYTHON')][0].name" -o tsv 2>/dev/null
+            # Find backend web app - try multiple methods
+            local result=""
+            
+            # Method 1: Look for Python runtime in linuxFxVersion
+            result=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(siteConfig.linuxFxVersion, 'PYTHON')][0].name" -o tsv 2>/dev/null)
+            
+            # Method 2: Look for apps with 'backend', 'api', or 'back' in name
+            if [ -z "$result" ]; then
+                result=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'backend') || contains(tolower(name), 'api') || contains(tolower(name), 'back')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # Method 3: Look for Python runtime in different property paths
+            if [ -z "$result" ]; then
+                result=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(siteConfig.linuxFxVersion || ''), 'python')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # Method 4: Check app settings for Python-related configurations
+            if [ -z "$result" ]; then
+                local apps=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+                for app in $apps; do
+                    # Check if app has Python-related settings or startup commands
+                    local startup=$(az webapp config show --name "$app" --resource-group "$RESOURCE_GROUP" --query "appCommandLine || ''" -o tsv 2>/dev/null)
+                    if echo "$startup" | grep -qi "python\|\.py\|gunicorn\|flask\|django"; then
+                        result="$app"
+                        break
+                    fi
+                done
+            fi
+            
+            echo "$result"
             ;;
         "webapp-frontend")
-            # Find frontend web app (Node.js runtime) 
-            az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(siteConfig.linuxFxVersion, 'NODE')][0].name" -o tsv 2>/dev/null
+            # Find frontend web app - try multiple methods
+            local result=""
+            
+            # Method 1: Look for Node.js runtime in linuxFxVersion
+            result=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(siteConfig.linuxFxVersion, 'NODE')][0].name" -o tsv 2>/dev/null)
+            
+            # Method 2: Look for apps with 'frontend', 'ui', 'web', or 'front' in name
+            if [ -z "$result" ]; then
+                result=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'frontend') || contains(tolower(name), 'front') || contains(tolower(name), 'ui') || contains(tolower(name), 'web')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # Method 3: Look for Node runtime in different property paths
+            if [ -z "$result" ]; then
+                result=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(siteConfig.linuxFxVersion || ''), 'node')][0].name" -o tsv 2>/dev/null)
+            fi
+            
+            # Method 4: Check app settings for Node.js-related configurations
+            if [ -z "$result" ]; then
+                local apps=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+                for app in $apps; do
+                    # Check if app has Node.js-related settings or startup commands
+                    local startup=$(az webapp config show --name "$app" --resource-group "$RESOURCE_GROUP" --query "appCommandLine || ''" -o tsv 2>/dev/null)
+                    if echo "$startup" | grep -qi "node\|npm\|\.js\|express\|react\|angular\|vue"; then
+                        result="$app"
+                        break
+                    fi
+                done
+            fi
+            
+            # Method 5: If still not found, look for any remaining web app (assumes backend was found first)
+            if [ -z "$result" ]; then
+                # Get all webapps and exclude any that might be backend
+                local all_apps=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+                for app in $all_apps; do
+                    # Skip if this looks like a backend app
+                    if ! echo "$app" | grep -qi "backend\|api\|back"; then
+                        result="$app"
+                        break
+                    fi
+                done
+            fi
+            
+            echo "$result"
             ;;
     esac
 }
@@ -574,41 +679,86 @@ echo "   🔍 Searching for existing OpenAI services in resource group..."
 
 # Debug: List all cognitive services first
 echo "   📋 All cognitive services in resource group:"
-COGNITIVE_SERVICES_LIST=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].{name:name, kind:kind, location:location}" -o table 2>/dev/null)
+COGNITIVE_SERVICES_LIST=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].{name:name, kind:kind, location:location, endpoint:properties.endpoint}" -o table 2>/dev/null)
 if [ -n "$COGNITIVE_SERVICES_LIST" ]; then
     echo "$COGNITIVE_SERVICES_LIST"
 else
     echo "   No cognitive services found or command failed"
 fi
 
-echo "   🔍 Testing different OpenAI detection methods..."
+echo ""
+echo "   🔍 Running comprehensive OpenAI detection..."
 EXISTING_OPENAI=$(find_existing_resource "openai")
-echo "   🔍 OpenAI detection result: '$EXISTING_OPENAI'"
+echo "   🔍 Primary detection result: '$EXISTING_OPENAI'"
 
-# Additional manual verification if detection failed
+# Enhanced verification with detailed debugging
 if [ -z "$EXISTING_OPENAI" ]; then
-    echo "   🔍 Manual verification: checking for services with 'openai' in name..."
+    echo "   🔍 Primary detection failed, trying alternative methods..."
+    
+    # Method 1: Check by name patterns
+    echo "   📝 Method 1: Checking services with 'openai' in name..."
     MANUAL_CHECK=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[?contains(tolower(name), 'openai')].name" -o tsv 2>/dev/null)
     if [ -n "$MANUAL_CHECK" ]; then
-        echo "   ⚠️  Found service(s) with 'openai' in name: $MANUAL_CHECK"
-        echo "   This might be your OpenAI service with unexpected metadata"
+        echo "   ✅ Found by name: $MANUAL_CHECK"
+    else
+        echo "   ❌ No services with 'openai' in name"
     fi
+    
+    # Method 2: Check by deployments
+    echo "   📝 Method 2: Checking for OpenAI model deployments..."
+    SERVICES_WITH_MODELS=""
+    SERVICES=$(az cognitiveservices account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv 2>/dev/null)
+    for service in $SERVICES; do
+        if [ -n "$service" ]; then
+            DEPLOYMENTS=$(az cognitiveservices account deployment list --name "$service" --resource-group "$RESOURCE_GROUP" --query "[?contains(model.name, 'gpt') || contains(model.name, 'embedding')].name" -o tsv 2>/dev/null)
+            if [ -n "$DEPLOYMENTS" ]; then
+                echo "   ✅ Service '$service' has OpenAI deployments: $DEPLOYMENTS"
+                SERVICES_WITH_MODELS="$service"
+                break
+            fi
+        fi
+    done
+    
+    # Method 3: Check by endpoint patterns
+    echo "   📝 Method 3: Checking for OpenAI endpoint patterns..."
+    SERVICES_WITH_OPENAI_ENDPOINT=""
+    for service in $SERVICES; do
+        if [ -n "$service" ]; then
+            ENDPOINT=$(az cognitiveservices account show --name "$service" --resource-group "$RESOURCE_GROUP" --query "properties.endpoint" -o tsv 2>/dev/null)
+            if echo "$ENDPOINT" | grep -qi "openai"; then
+                echo "   ✅ Service '$service' has OpenAI endpoint: $ENDPOINT"
+                SERVICES_WITH_OPENAI_ENDPOINT="$service"
+                break
+            fi
+        fi
+    done
+    
+    # Determine best match
+    if [ -n "$MANUAL_CHECK" ]; then
+        EXISTING_OPENAI=$(echo "$MANUAL_CHECK" | head -n1)
+        echo "   🎯 Using name-based match: $EXISTING_OPENAI"
+    elif [ -n "$SERVICES_WITH_MODELS" ]; then
+        EXISTING_OPENAI="$SERVICES_WITH_MODELS"
+        echo "   🎯 Using deployment-based match: $EXISTING_OPENAI"
+    elif [ -n "$SERVICES_WITH_OPENAI_ENDPOINT" ]; then
+        EXISTING_OPENAI="$SERVICES_WITH_OPENAI_ENDPOINT"
+        echo "   🎯 Using endpoint-based match: $EXISTING_OPENAI"
+    fi
+else
+    echo "   ✅ Primary detection successful"
 fi
+
+echo "   🔍 Final OpenAI detection result: '$EXISTING_OPENAI'"
 
 if [ -n "$EXISTING_OPENAI" ] && [ "$EXISTING_OPENAI" != "" ]; then
     echo "✅ Found existing OpenAI Service '$EXISTING_OPENAI' - skipping creation"
+    # Save original config name for reference
+    ORIGINAL_OPENAI_NAME="$OPENAI_SERVICE"
     export OPENAI_SERVICE="$EXISTING_OPENAI"
     echo "   Using existing: $OPENAI_SERVICE"
-    echo "   Original config name: $(echo $OPENAI_SERVICE | head -c 30)... → Updated to: $EXISTING_OPENAI"
-    OPENAI_EXIT_CODE=0
-    DEPLOY_MODELS=true
-elif [ -n "$MANUAL_CHECK" ]; then
-    # Use the first service found in manual check
-    MANUAL_OPENAI=$(echo "$MANUAL_CHECK" | head -n1)
-    echo "✅ Using manually detected OpenAI service '$MANUAL_OPENAI'"
-    export OPENAI_SERVICE="$MANUAL_OPENAI"
-    echo "   Using manually detected: $OPENAI_SERVICE"
-    echo "   Original config name: $(echo ${OPENAI_SERVICE:-'not set'} | head -c 30)... → Updated to: $MANUAL_OPENAI"
+    if [ "$ORIGINAL_OPENAI_NAME" != "$EXISTING_OPENAI" ]; then
+        echo "   📝 Config updated: '$ORIGINAL_OPENAI_NAME' → '$EXISTING_OPENAI'"
+    fi
     OPENAI_EXIT_CODE=0
     DEPLOY_MODELS=true
 else
@@ -1131,12 +1281,26 @@ fi
 # Step 11: Create Backend Web App
 echo "🔧 Checking for existing Backend Web App..."
 
-# Check if any Python backend web app already exists in the resource group
+# Debug: List all web apps first
+echo "   📋 All web apps in resource group:"
+WEBAPP_LIST=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[].{name:name, state:state, runtime:siteConfig.linuxFxVersion}" -o table 2>/dev/null)
+if [ -n "$WEBAPP_LIST" ]; then
+    echo "$WEBAPP_LIST"
+else
+    echo "   No web apps found or command failed"
+fi
+
+echo "   🔍 Running backend web app detection..."
 EXISTING_BACKEND=$(find_existing_resource "webapp-backend")
 if [ -n "$EXISTING_BACKEND" ] && [ "$EXISTING_BACKEND" != "" ]; then
     echo "✅ Found existing Backend Web App '$EXISTING_BACKEND' - skipping creation"
+    # Save original config name for reference
+    ORIGINAL_BACKEND_NAME="$BACKEND_APP_NAME"
     export BACKEND_APP_NAME="$EXISTING_BACKEND"
     echo "   Using existing: $BACKEND_APP_NAME"
+    if [ "$ORIGINAL_BACKEND_NAME" != "$EXISTING_BACKEND" ]; then
+        echo "   📝 Config updated: '$ORIGINAL_BACKEND_NAME' → '$EXISTING_BACKEND'"
+    fi
 else
     echo "   No existing backend web app found, creating: $BACKEND_APP_NAME"
 
@@ -1185,12 +1349,17 @@ fi
 # Step 12: Create Frontend Web App
 echo "🎨 Checking for existing Frontend Web App..."
 
-# Check if any Node.js frontend web app already exists in the resource group
+echo "   🔍 Running frontend web app detection..."
 EXISTING_FRONTEND=$(find_existing_resource "webapp-frontend")
 if [ -n "$EXISTING_FRONTEND" ] && [ "$EXISTING_FRONTEND" != "" ]; then
     echo "✅ Found existing Frontend Web App '$EXISTING_FRONTEND' - skipping creation"
+    # Save original config name for reference
+    ORIGINAL_FRONTEND_NAME="$FRONTEND_APP_NAME"
     export FRONTEND_APP_NAME="$EXISTING_FRONTEND"
     echo "   Using existing: $FRONTEND_APP_NAME"
+    if [ "$ORIGINAL_FRONTEND_NAME" != "$EXISTING_FRONTEND" ]; then
+        echo "   📝 Config updated: '$ORIGINAL_FRONTEND_NAME' → '$EXISTING_FRONTEND'"
+    fi
 else
     echo "   No existing frontend web app found, creating: $FRONTEND_APP_NAME"
 
@@ -1297,6 +1466,7 @@ echo "      SEARCH_SERVICE: $SEARCH_SERVICE"
 echo "      OPENAI_SERVICE: $OPENAI_SERVICE"
 echo "      COSMOS_ACCOUNT: $COSMOS_ACCOUNT"
 echo "      BACKEND_APP_NAME: $BACKEND_APP_NAME"
+echo "      FRONTEND_APP_NAME: $FRONTEND_APP_NAME"
 echo ""
 
 # Fallback: Re-detect resources if variables are empty or resources don't exist
@@ -1352,6 +1522,16 @@ if [ -z "$BACKEND_APP_NAME" ] || ! az webapp show --name "$BACKEND_APP_NAME" --r
     if [ -n "$BACKEND_APP_NAME" ]; then
         echo "   ✅ Found backend web app: $BACKEND_APP_NAME"
         export BACKEND_APP_NAME
+    fi
+fi
+
+# Re-detect frontend web app if variable is empty or resource doesn't exist
+if [ -z "$FRONTEND_APP_NAME" ] || ! az webapp show --name "$FRONTEND_APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+    echo "   🔍 Re-detecting frontend web app..."
+    FRONTEND_APP_NAME=$(find_existing_resource "webapp-frontend")
+    if [ -n "$FRONTEND_APP_NAME" ]; then
+        echo "   ✅ Found frontend web app: $FRONTEND_APP_NAME"
+        export FRONTEND_APP_NAME
     fi
 fi
 
