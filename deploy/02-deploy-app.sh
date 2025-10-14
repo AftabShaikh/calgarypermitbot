@@ -222,6 +222,34 @@ EOF
             --src /tmp/backend-deploy.zip
     }
     
+    # Configure build settings BEFORE deployment (critical for Oryx build success)
+    echo "🔧 Configuring build-specific environment variables..."
+    az webapp config appsettings set \
+        --name $BACKEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --settings \
+            SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+            ENABLE_ORYX_BUILD="true" \
+            ORYX_ENV_TYPE="python" \
+            ORYX_PYTHON_VERSION="3.11" \
+            PRE_BUILD_SCRIPT_PATH="" \
+            POST_BUILD_SCRIPT_PATH="" \
+            DISABLE_COLLECTSTATIC="1"
+    
+    # Configure Python runtime
+    echo "🔧 Setting Python runtime version..."
+    az webapp config set \
+        --name $BACKEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --linux-fx-version "PYTHON|3.11"
+    
+    # Set startup command
+    echo "🔧 Setting startup command..."
+    az webapp config set \
+        --name $BACKEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --startup-file "python startup.py"
+    
     # Force clean deployment by stopping app and clearing cache
     echo "🔄 Preparing app for clean deployment..."
     az webapp stop --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
@@ -230,10 +258,11 @@ EOF
     echo "🧹 Clearing deployment cache..."
     az webapp deployment source delete --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null || true
     
-    # Start the app again
-    az webapp start --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
-    echo "⏳ Waiting for app to start..."
-    for i in {1..3}; do
+    # Restart to apply configuration changes
+    echo "🔄 Restarting app to apply configuration changes..."
+    az webapp restart --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP
+    echo "⏳ Waiting for app to restart..."
+    for i in {1..5}; do
         sleep 5
     done
     
@@ -529,7 +558,7 @@ echo "⚙️  Configuring application settings..."
 BACKEND_URL="https://$BACKEND_APP_NAME.azurewebsites.net"
 FRONTEND_URL="https://$FRONTEND_APP_NAME.azurewebsites.net"
 
-# Configure backend app settings for native Python deployment
+# Configure backend app settings for native Python deployment (optimized for Oryx build)
 echo "🔧 Configuring backend application settings..."
 az webapp config appsettings set \
     --name $BACKEND_APP_NAME \
@@ -545,9 +574,10 @@ az webapp config appsettings set \
         WEBSITE_HTTPLOGGING_RETENTION_DAYS="7" \
         SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
         ENABLE_ORYX_BUILD="true" \
-        BUILD_FLAGS="" \
         ORYX_ENV_TYPE="python" \
-        ORYX_ENV_NAME="antenv" \
+        ORYX_PYTHON_VERSION="3.11" \
+        PRE_BUILD_SCRIPT_PATH="" \
+        POST_BUILD_SCRIPT_PATH="" \
         DISABLE_COLLECTSTATIC="1" \
         XDG_CACHE_HOME="/tmp/.cache" \
         RUNNING_IN_PRODUCTION="true" \
@@ -555,28 +585,14 @@ az webapp config appsettings set \
         PYTHONUNBUFFERED="1" \
         PYTHONIOENCODING="UTF-8"
 
-# Configure Python runtime for Azure App Service
-echo "🔧 Configuring Python runtime..."
-az webapp config set \
-    --name $BACKEND_APP_NAME \
-    --resource-group $RESOURCE_GROUP \
-    --linux-fx-version "PYTHON|3.11"
-
-# Enable remote debugging (helpful for troubleshooting)
-echo "🔧 Enabling remote debugging..."
+# Enable remote debugging and additional settings (helpful for troubleshooting)
+echo "🔧 Enabling additional debugging settings..."
 az webapp config appsettings set \
     --name $BACKEND_APP_NAME \
     --resource-group $RESOURCE_GROUP \
     --settings \
         WEBSITE_ENABLE_SYNC_UPDATE_SITE="true" \
         WEBSITE_RUN_FROM_PACKAGE="0"
-
-# Set startup command to use Python startup script
-echo "🔧 Configuring backend startup command..."
-az webapp config set \
-    --name $BACKEND_APP_NAME \
-    --resource-group $RESOURCE_GROUP \
-    --startup-file "python startup.py"
 
 # Configure frontend app settings  
 echo "🎨 Configuring frontend application settings..."
