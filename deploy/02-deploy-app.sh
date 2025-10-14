@@ -313,12 +313,6 @@ EOF
         if curl -f -s "https://$BACKEND_APP_NAME.azurewebsites.net/health" > /dev/null 2>&1; then
             echo "✅ Backend is responding normally"
         else
-            echo "⚠️ Backend not responding, checking logs for dependency issues..."
-            
-            # Check recent logs for dependency errors
-            RECENT_LOGS=$(timeout 20 az webapp log tail --name $BACKEND_APP_NAME --resource-group $RESOURCE_GROUP 2>/dev/null | tail -20 || echo "")
-            
-            else
             echo "ℹ️ Backend health check failed - this is normal during initial deployment"
             echo "   The application may still be starting up or building dependencies"
         fi
