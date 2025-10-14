@@ -233,7 +233,7 @@ EOF
     
     # Function to deploy with timeout using deployment source for proper build
     deploy_backend() {
-        timeout --preserve-status --kill-after=10 300 az webapp deployment source config-zip \
+        timeout --preserve-status --kill-after=10 600 az webapp deployment source config-zip \
             --name $BACKEND_APP_NAME \
             --resource-group $RESOURCE_GROUP \
             --src /tmp/backend-deploy.zip
@@ -277,8 +277,8 @@ EOF
     
     echo "✅ Ready for deployment - app will remain running during deployment"
     
-    # Try deployment with timeout (5 minutes)
-    echo "🚀 Starting backend deployment (timeout: 5 minutes)..."
+    # Try deployment with timeout (10 minutes)
+    echo "🚀 Starting backend deployment (timeout: 10 minutes)..."
     echo "   Note: You can press Ctrl+C to interrupt if it gets stuck"
     if deploy_backend; then
         echo "✅ Backend deployed successfully"
@@ -352,7 +352,7 @@ EOF
     else
         DEPLOY_EXIT_CODE=$?
         if [ $DEPLOY_EXIT_CODE -eq 124 ]; then
-            echo "❌ Backend deployment timed out after 5 minutes"
+            echo "❌ Backend deployment timed out after 10 minutes"
         else
             echo "❌ Backend deployment failed with exit code: $DEPLOY_EXIT_CODE"
         fi
@@ -692,8 +692,7 @@ az webapp config appsettings set \
     --settings \
         BACKEND_URL="$BACKEND_URL" \
         NODE_ENV="production" \
-        WEBSITE_NODE_DEFAULT_VERSION="18-lts" \
-        SCM_DO_BUILD_DURING_DEPLOYMENT="false"
+        WEBSITE_NODE_DEFAULT_VERSION="18-lts"
 
 # Step 5: Run data preprocessing (create search index)
 echo "🔍 Setting up search index and processing documents..."
