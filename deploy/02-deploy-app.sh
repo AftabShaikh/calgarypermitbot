@@ -403,16 +403,25 @@ if [ -d "$FRONTEND_FOLDER" ]; then
     rm -rf /tmp/frontend-deploy
     mkdir -p /tmp/frontend-deploy
     
-    # Copy built files (typically in 'dist' or 'build' folder)
-    if [ -d "dist" ]; then
+    # Copy built files (Vite builds to ../backend/static folder)
+    BACKEND_STATIC_DIR="../backend/static"
+    if [ -d "$BACKEND_STATIC_DIR" ] && [ "$(ls -A $BACKEND_STATIC_DIR 2>/dev/null)" ]; then
+        cp -r "$BACKEND_STATIC_DIR"/* /tmp/frontend-deploy/
+        echo "✅ Copied files from backend/static/ folder (Vite build output)"
+        echo "📁 Files copied:"
+        ls -la /tmp/frontend-deploy/ | head -10
+    elif [ -d "dist" ]; then
         cp -r dist/* /tmp/frontend-deploy/
         echo "✅ Copied files from dist/ folder"
     elif [ -d "build" ]; then
         cp -r build/* /tmp/frontend-deploy/
         echo "✅ Copied files from build/ folder"
     else
-        echo "❌ No build output found (looking for dist/ or build/ folders)"
+        echo "❌ No build output found (looking for ../backend/static/, dist/, or build/ folders)"
+        echo "📂 Current directory contents:"
         ls -la
+        echo "📂 Checking backend static directory:"
+        ls -la ../backend/static/ 2>/dev/null || echo "Backend static directory not found"
         exit 1
     fi
     
