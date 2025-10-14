@@ -317,9 +317,6 @@ EOF
             echo "   The application may still be starting up or building dependencies"
         fi
     else
-        echo "ℹ️ Backend health check timeout - continuing with deployment"
-        fi
-    else
         DEPLOY_EXIT_CODE=$?
         if [ $DEPLOY_EXIT_CODE -eq 124 ] || [ $DEPLOY_EXIT_CODE -eq 143 ]; then
             if [ $DEPLOY_EXIT_CODE -eq 124 ]; then
