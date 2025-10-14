@@ -174,16 +174,13 @@ if [ -d "$BACKEND_FOLDER" ]; then
 SCM_DO_BUILD_DURING_DEPLOYMENT=true
 EOF
 
-    # Use the optimized requirements-core.txt for Azure App Service deployment
-    echo "📝 Using requirements-core.txt for Azure App Service deployment..."
-    if [ ! -f "requirements-core.txt" ]; then
-        echo "❌ requirements-core.txt not found in backend directory"
+    # Verify requirements.txt exists and is clean
+    echo "📝 Using existing requirements.txt for Azure App Service deployment..."
+    if [ ! -f "requirements.txt" ]; then
+        echo "❌ requirements.txt not found in backend directory"
         exit 1
     fi
-    
-    # Copy requirements-core.txt as requirements.txt for deployment
-    cp requirements-core.txt requirements.txt
-    echo "✅ Using requirements-core.txt as deployment requirements"
+    echo "✅ Using existing requirements.txt for deployment"
 
     # Verify startup.py exists
     if [ ! -f "startup.py" ]; then
