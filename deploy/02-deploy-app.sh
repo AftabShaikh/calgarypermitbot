@@ -174,28 +174,82 @@ if [ -d "$BACKEND_FOLDER" ]; then
 SCM_DO_BUILD_DURING_DEPLOYMENT=true
 EOF
 
-    # Verify requirements.txt exists and is clean
+    # Verify requirements.txt exists and validate it
     echo "📝 Using existing requirements.txt for Azure App Service deployment..."
     if [ ! -f "requirements.txt" ]; then
         echo "❌ requirements.txt not found in backend directory"
         exit 1
     fi
-    echo "✅ Using existing requirements.txt for deployment"
+    
+    # Run requirements validation
+    echo "🔍 Validating requirements.txt completeness..."
+    if [ -f "$SCRIPT_DIR/validate-requirements.sh" ]; then
+        if ! "$SCRIPT_DIR/validate-requirements.sh"; then
+            echo "❌ Requirements validation failed. Please fix requirements.txt before deploying."
+            exit 1
+        fi
+    else
+        echo "⚠️  Requirements validation script not found, skipping validation"
+    fi
+    
+    echo "✅ Requirements.txt validated and ready for deployment"
     
     # Add Oryx build detection files to ensure proper build
     echo "🔧 Adding Oryx build detection files..."
     echo "python" > .oryx_env_type
     echo "3.11" > .python-version
     
-    # Create a simple build script to force Oryx recognition
+    # Validate requirements.txt has all necessary dependencies
+    echo "🔍 Validating requirements.txt completeness..."
+    REQUIRED_PACKAGES=("prompty" "rich" "tenacity" "tiktoken" "quart" "uvicorn" "gunicorn" "azure-identity" "azure-storage-blob" "azure-search-documents" "azure-cosmos" "openai")
+    
+    for package in "${REQUIRED_PACKAGES[@]}"; do
+        if ! grep -q "^${package}" requirements.txt; then
+            echo "⚠️  Missing required package: $package"
+            echo "   Please ensure requirements.txt includes all dependencies"
+        else
+            echo "✅ Found: $package"
+        fi
+    done
+    
+    # Create a comprehensive build script for Oryx
     cat > build.sh << 'EOF'
 #!/bin/bash
-echo "Oryx build starting..."
-python --version
-pip --version
-echo "Installing requirements..."
-pip install -r requirements.txt
-echo "Build completed"
+set -e
+echo "🚀 Calgary Permit Bot - Custom Build Script"
+echo "============================================="
+echo "Python version: $(python --version)"
+echo "Pip version: $(pip --version)"
+echo "Current directory: $(pwd)"
+echo "Available files:"
+ls -la
+
+echo ""
+echo "📦 Installing Python dependencies..."
+echo "Requirements file contents:"
+head -20 requirements.txt
+
+# Upgrade pip first
+python -m pip install --upgrade pip --no-cache-dir
+
+# Install requirements with verbose output
+echo "🔧 Installing from requirements.txt..."
+python -m pip install -r requirements.txt --no-cache-dir --verbose
+
+# Verify critical packages are installed
+echo ""
+echo "🔍 Verifying critical package installations..."
+python -c "import prompty; print('✅ prompty installed')" || echo "❌ prompty failed"
+python -c "import rich; print('✅ rich installed')" || echo "❌ rich failed"  
+python -c "import tenacity; print('✅ tenacity installed')" || echo "❌ tenacity failed"
+python -c "import tiktoken; print('✅ tiktoken installed')" || echo "❌ tiktoken failed"
+python -c "import quart; print('✅ quart installed')" || echo "❌ quart failed"
+python -c "import uvicorn; print('✅ uvicorn installed')" || echo "❌ uvicorn failed"
+python -c "import azure.identity; print('✅ azure-identity installed')" || echo "❌ azure-identity failed"
+python -c "import openai; print('✅ openai installed')" || echo "❌ openai failed"
+
+echo ""
+echo "✅ Build completed successfully!"
 EOF
     chmod +x build.sh
 
@@ -325,21 +379,33 @@ EOF
             ENABLE_ORYX_BUILD="true" \
             ORYX_ENV_TYPE="python" \
             ORYX_PYTHON_VERSION="3.11" \
-            PRE_BUILD_SCRIPT_PATH="" \
+            PRE_BUILD_COMMAND="chmod +x build.sh && ./build.sh" \
+            PRE_BUILD_SCRIPT_PATH="build.sh" \
             POST_BUILD_SCRIPT_PATH="" \
             DISABLE_COLLECTSTATIC="true" \
             WEBSITE_RUN_FROM_PACKAGE="0" \
             WEBSITE_ENABLE_SYNC_UPDATE_SITE="true" \
             PYTHONPATH="/home/site/wwwroot" \
-            PYTHON_ISOLATE_WORKER_DEPENDENCIES="1"
+            PYTHON_ISOLATE_WORKER_DEPENDENCIES="1" \
+            PIP_EXTRA_INDEX_URL="" \
+            PIP_TRUSTED_HOST="" \
+            ORYX_DISABLE_PIP_UPGRADE="false"
     
-    # Configure Python runtime and startup command
+    # Configure Python runtime and startup command with fallback
     echo "🔧 Setting Python runtime version and startup command..."
     az webapp config set \
         --name $BACKEND_APP_NAME \
         --resource-group $RESOURCE_GROUP \
         --linux-fx-version "PYTHON|3.11" \
         --startup-file "python run_app.py"
+    
+    # Set additional startup options as environment variables
+    az webapp config appsettings set \
+        --name $BACKEND_APP_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --settings \
+            STARTUP_COMMAND_FALLBACK="python start_app.py" \
+            GUNICORN_CMD_ARGS="--worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --workers 1"
     
     # Prepare for clean deployment without stopping the app
     echo "🔄 Preparing for clean deployment..."
