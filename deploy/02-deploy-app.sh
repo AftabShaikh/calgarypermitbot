@@ -261,7 +261,7 @@ EOF
         --name $BACKEND_APP_NAME \
         --resource-group $RESOURCE_GROUP \
         --linux-fx-version "PYTHON|3.11" \
-        --startup-file "python run_app.py"
+        --startup-file "gunicorn --worker-class uvicorn.workers.UvicornWorker main:app"
     
     # Prepare for clean deployment without stopping the app
     echo "🔄 Preparing for clean deployment..."

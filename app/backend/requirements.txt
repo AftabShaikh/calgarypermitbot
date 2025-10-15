@@ -1,38 +1,21 @@
-# Calgary Permit Bot - Azure App Service Requirements
-# Minimal dependencies for reliable Azure App Service deployment
-
-# Web framework
 quart==0.19.4
 gunicorn==21.2.0
-
-# Core Azure packages
+uvicorn[standard]==0.24.0
 azure-identity==1.17.1
 azure-storage-blob==12.22.0
 azure-storage-file-datalake==12.16.0
 azure-search-documents==11.6.0b12
 azure-cosmos==4.9.0
 azure-cognitiveservices-speech==1.40.0
-
-# OpenAI
 openai==1.63.0
-
-# Essential utilities
 aiohttp==3.10.11
 python-dotenv==1.0.1
 pyyaml==6.0.2
 cryptography==44.0.1
 beautifulsoup4==4.12.3
 quart-cors==0.7.0
-
-# OpenTelemetry (monitoring)
 opentelemetry-instrumentation-aiohttp-client==0.52b1
 opentelemetry-instrumentation-asgi==0.52b1
 opentelemetry-instrumentation-httpx==0.52b1
 opentelemetry-instrumentation-openai==0.39.0
-
-# Basic data processing
 pillow==10.4.0
-
-# Runtime essentials
-flask==3.0.3
-click==8.1.7
