@@ -184,12 +184,35 @@ EOF
     # Run requirements validation
     echo "🔍 Validating requirements.txt completeness..."
     if [ -f "$SCRIPT_DIR/validate-requirements.sh" ]; then
-        if ! "$SCRIPT_DIR/validate-requirements.sh"; then
+        # Change to the script directory to ensure proper relative paths work
+        cd "$SCRIPT_DIR"
+        if ! ./validate-requirements.sh; then
             echo "❌ Requirements validation failed. Please fix requirements.txt before deploying."
             exit 1
         fi
+        # Return to backend directory
+        cd "$BACKEND_FOLDER"
     else
-        echo "⚠️  Requirements validation script not found, skipping validation"
+        echo "⚠️  Requirements validation script not found, using inline validation"
+        # Inline validation as fallback
+        echo "🔍 Running inline requirements validation..."
+        CRITICAL_PACKAGES=("prompty" "rich" "tenacity" "tiktoken" "quart" "uvicorn" "gunicorn")
+        MISSING_INLINE=()
+        
+        for package in "${CRITICAL_PACKAGES[@]}"; do
+            if ! grep -q "^${package}" requirements.txt; then
+                echo "❌ Missing: $package"
+                MISSING_INLINE+=("$package")
+            else
+                echo "✅ Found: $package"
+            fi
+        done
+        
+        if [ ${#MISSING_INLINE[@]} -gt 0 ]; then
+            echo "❌ Critical packages missing from requirements.txt: ${MISSING_INLINE[*]}"
+            exit 1
+        fi
+        echo "✅ Inline validation passed"
     fi
     
     echo "✅ Requirements.txt validated and ready for deployment"

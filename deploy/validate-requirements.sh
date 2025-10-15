@@ -5,12 +5,22 @@
 
 echo "🔍 Validating Calgary Permit Bot Requirements"
 echo "============================================="
+echo "Debug info:"
+echo "  Current working directory: $(pwd)"
+echo "  Script location: $0"
 
-BACKEND_DIR="/workspaces/calgarypermitbot/app/backend"
+# Get the directory of this script and determine project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+BACKEND_DIR="$PROJECT_ROOT/app/backend"
 REQUIREMENTS_FILE="$BACKEND_DIR/requirements.txt"
 
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
     echo "❌ requirements.txt not found at $REQUIREMENTS_FILE"
+    echo "   Script directory: $SCRIPT_DIR"
+    echo "   Project root: $PROJECT_ROOT"
+    echo "   Backend directory: $BACKEND_DIR"
+    echo "   Looking for: $REQUIREMENTS_FILE"
     exit 1
 fi
 
