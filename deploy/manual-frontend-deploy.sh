@@ -69,23 +69,91 @@ else
     exit 1
 fi
 
-# Create Express server for SPA
+# Create Express server with API proxying for SPA
 cat > "$DEPLOY_DIR/server.js" << 'EOF'
 const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Serve static files
-app.use(express.static(path.join(__dirname)));
+// Get backend URL from environment variable set by Azure App Service
+const BACKEND_URL = process.env.BACKEND_URL;
 
-// Handle SPA routing - serve index.html for all routes
+if (!BACKEND_URL) {
+  console.error('ERROR: BACKEND_URL environment variable is not set!');
+  console.error('This should be configured in Azure App Service settings.');
+  process.exit(1);
+}
+
+console.log(`Frontend server starting on port ${port}`);
+console.log(`Backend URL: ${BACKEND_URL}`);
+
+// API proxy middleware - proxy all API calls to the backend
+const apiProxy = createProxyMiddleware({
+  target: BACKEND_URL,
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api': '/api' // Keep /api prefix
+  },
+  logLevel: 'info',
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(500).json({ error: 'Backend service unavailable' });
+  }
+});
+
+// Proxy API routes to backend
+app.use('/api', apiProxy);
+app.use('/ask', apiProxy);
+app.use('/chat', apiProxy);
+app.use('/config', apiProxy);
+app.use('/health', apiProxy);
+app.use('/speech', apiProxy);
+app.use('/upload', apiProxy);
+app.use('/delete_uploaded', apiProxy);
+app.use('/list_uploaded', apiProxy);
+app.use('/chat_history', apiProxy);
+app.use('/content', apiProxy);
+app.use('/auth_setup', apiProxy);
+app.use('/.auth/me', apiProxy);
+
+// Serve static files with proper MIME types
+app.use(express.static(path.join(__dirname), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    } else if (filePath.endsWith('.css')) {
+      res.setHeader('Content-Type', 'text/css');
+    } else if (filePath.endsWith('.html')) {
+      res.setHeader('Content-Type', 'text/html');
+    }
+  }
+}));
+
+// Handle SPA routing - serve index.html for non-asset routes
 app.get('*', (req, res) => {
+  // Don't intercept asset requests - let express.static handle them first
+  if (req.path.startsWith('/assets/') || 
+      req.path.endsWith('.js') || 
+      req.path.endsWith('.css') || 
+      req.path.endsWith('.map') ||
+      req.path.endsWith('.ico') ||
+      req.path.endsWith('.png') ||
+      req.path.endsWith('.jpg') ||
+      req.path.endsWith('.svg')) {
+    // If we reach here, the file doesn't exist, so return 404
+    res.status(404).send('File not found');
+    return;
+  }
+  // For all other routes (SPA routes), serve index.html
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(port, () => {
   console.log(`Frontend server running on port ${port}`);
+  console.log(`Serving static files from: ${__dirname}`);
+  console.log(`Proxying API calls to: ${BACKEND_URL}`);
 });
 EOF
 
@@ -100,10 +168,11 @@ cat > "$DEPLOY_DIR/package.json" << 'EOF'
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   }
 }
 EOF

@@ -1,4 +1,4 @@
-const BACKEND_URI = "";
+const BACKEND_URI = import.meta.env.VITE_BACKEND_URL || "";
 
 import { ChatAppResponse, ChatAppResponseOrError, ChatAppRequest, Config, SimpleAPIResponse, HistoryListApiResponse, HistoryApiResponse } from "./models";
 import { useLogin, getToken, isUsingAppServicesLogin } from "../authConfig";

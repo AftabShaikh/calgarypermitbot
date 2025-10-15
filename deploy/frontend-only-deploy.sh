@@ -106,12 +106,54 @@ if [ -d "$FRONTEND_FOLDER" ]; then
         exit 1
     fi
     
-    # Create a simple Express server to serve the SPA
+    # Create an Express server with API proxying to serve the SPA
     cat > /tmp/frontend-deploy/server.js << 'EOF'
 const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const app = express();
 const port = process.env.PORT || 8080;
+
+// Get backend URL from environment variable set by Azure App Service
+const BACKEND_URL = process.env.BACKEND_URL;
+
+if (!BACKEND_URL) {
+  console.error('ERROR: BACKEND_URL environment variable is not set!');
+  console.error('This should be configured in Azure App Service settings.');
+  process.exit(1);
+}
+
+console.log(`Frontend server starting on port ${port}`);
+console.log(`Backend URL: ${BACKEND_URL}`);
+
+// API proxy middleware - proxy all API calls to the backend
+const apiProxy = createProxyMiddleware({
+  target: BACKEND_URL,
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api': '/api' // Keep /api prefix
+  },
+  logLevel: 'info',
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(500).json({ error: 'Backend service unavailable' });
+  }
+});
+
+// Proxy API routes to backend
+app.use('/api', apiProxy);
+app.use('/ask', apiProxy);
+app.use('/chat', apiProxy);
+app.use('/config', apiProxy);
+app.use('/health', apiProxy);
+app.use('/speech', apiProxy);
+app.use('/upload', apiProxy);
+app.use('/delete_uploaded', apiProxy);
+app.use('/list_uploaded', apiProxy);
+app.use('/chat_history', apiProxy);
+app.use('/content', apiProxy);
+app.use('/auth_setup', apiProxy);
+app.use('/.auth/me', apiProxy);
 
 // Serve static files with proper MIME types
 app.use(express.static(path.join(__dirname), {
@@ -148,6 +190,7 @@ app.get('*', (req, res) => {
 app.listen(port, () => {
   console.log(`Frontend server running on port ${port}`);
   console.log(`Serving static files from: ${__dirname}`);
+  console.log(`Proxying API calls to: ${BACKEND_URL}`);
 });
 EOF
 
@@ -162,7 +205,8 @@ EOF
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6"
   },
   "engines": {
     "node": ">=20.0.0"

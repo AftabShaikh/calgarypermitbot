@@ -75,17 +75,28 @@ mkdir -p /tmp/frontend-deploy
 cp -r "$BACKEND_STATIC_DIR"/* /tmp/frontend-deploy/
 echo "✅ Files copied to deployment directory"
 
-# Create the Express server (fixed version)
-echo "🔧 Step 6: Creating optimized Express server..."
+# Create the Express server with API proxying (fixed version)
+echo "🔧 Step 6: Creating optimized Express server with API proxying..."
 cat > /tmp/frontend-deploy/server.js << 'EOF'
 const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 const path = require('path');
 const fs = require('fs');
 const app = express();
 const port = process.env.PORT || 8080;
 
+// Get backend URL from environment variable set by Azure App Service
+const BACKEND_URL = process.env.BACKEND_URL;
+
+if (!BACKEND_URL) {
+  console.error('ERROR: BACKEND_URL environment variable is not set!');
+  console.error('This should be configured in Azure App Service settings.');
+  process.exit(1);
+}
+
 console.log('🚀 Frontend server starting...');
 console.log('📁 Serving files from:', __dirname);
+console.log('🔗 Backend URL:', BACKEND_URL);
 
 // Log all files in the directory for debugging
 try {
@@ -100,6 +111,35 @@ try {
 } catch (error) {
     console.error('❌ Error reading directory:', error);
 }
+
+// API proxy middleware - proxy all API calls to the backend
+const apiProxy = createProxyMiddleware({
+  target: BACKEND_URL,
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api': '/api' // Keep /api prefix
+  },
+  logLevel: 'info',
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(500).json({ error: 'Backend service unavailable' });
+  }
+});
+
+// Proxy API routes to backend
+app.use('/api', apiProxy);
+app.use('/ask', apiProxy);
+app.use('/chat', apiProxy);
+app.use('/config', apiProxy);
+app.use('/health', apiProxy);
+app.use('/speech', apiProxy);
+app.use('/upload', apiProxy);
+app.use('/delete_uploaded', apiProxy);
+app.use('/list_uploaded', apiProxy);
+app.use('/chat_history', apiProxy);
+app.use('/content', apiProxy);
+app.use('/auth_setup', apiProxy);
+app.use('/.auth/me', apiProxy);
 
 // Serve static files with explicit MIME types and proper headers
 app.use(express.static(path.join(__dirname), {
@@ -152,6 +192,7 @@ app.use((error, req, res, next) => {
 app.listen(port, () => {
     console.log(`✅ Frontend server running on port ${port}`);
     console.log(`🌐 Access at: http://localhost:${port}`);
+    console.log(`🔗 Proxying API calls to: ${BACKEND_URL}`);
 });
 EOF
 
@@ -166,7 +207,8 @@ cat > /tmp/frontend-deploy/package.json << 'EOF'
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6"
   },
   "engines": {
     "node": ">=20.0.0"
