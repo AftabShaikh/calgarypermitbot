@@ -113,11 +113,26 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Serve static files
-app.use(express.static(path.join(__dirname)));
+// Serve static files with proper MIME types
+app.use(express.static(path.join(__dirname), {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    } else if (path.endsWith('.css')) {
+      res.setHeader('Content-Type', 'text/css');
+    } else if (path.endsWith('.html')) {
+      res.setHeader('Content-Type', 'text/html');
+    }
+  }
+}));
 
-// Handle SPA routing - serve index.html for all routes
+// Handle SPA routing - serve index.html for non-asset routes
 app.get('*', (req, res) => {
+  // Don't intercept asset requests
+  if (req.path.includes('.js') || req.path.includes('.css') || req.path.includes('.map') || req.path.includes('/assets/')) {
+    res.status(404).send('Not found');
+    return;
+  }
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
