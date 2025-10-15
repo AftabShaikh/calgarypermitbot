@@ -222,7 +222,7 @@ EOF
     echo "python" > .oryx_env_type
     echo "3.11" > .python-version
     
-    # Validate requirements.txt has all necessary dependencies
+    # Validate requirements.txt has all necessary dependencies (quick check)
     echo "🔍 Validating requirements.txt completeness..."
     REQUIRED_PACKAGES=("prompty" "rich" "tenacity" "tiktoken" "quart" "uvicorn" "gunicorn" "azure-identity" "azure-storage-blob" "azure-search-documents" "azure-cosmos" "openai")
     
@@ -235,46 +235,7 @@ EOF
         fi
     done
     
-    # Create a comprehensive build script for Oryx
-    cat > build.sh << 'EOF'
-#!/bin/bash
-set -e
-echo "🚀 Calgary Permit Bot - Custom Build Script"
-echo "============================================="
-echo "Python version: $(python --version)"
-echo "Pip version: $(pip --version)"
-echo "Current directory: $(pwd)"
-echo "Available files:"
-ls -la
-
-echo ""
-echo "📦 Installing Python dependencies..."
-echo "Requirements file contents:"
-head -20 requirements.txt
-
-# Upgrade pip first
-python -m pip install --upgrade pip --no-cache-dir
-
-# Install requirements with verbose output
-echo "🔧 Installing from requirements.txt..."
-python -m pip install -r requirements.txt --no-cache-dir --verbose
-
-# Verify critical packages are installed
-echo ""
-echo "🔍 Verifying critical package installations..."
-python -c "import prompty; print('✅ prompty installed')" || echo "❌ prompty failed"
-python -c "import rich; print('✅ rich installed')" || echo "❌ rich failed"  
-python -c "import tenacity; print('✅ tenacity installed')" || echo "❌ tenacity failed"
-python -c "import tiktoken; print('✅ tiktoken installed')" || echo "❌ tiktoken failed"
-python -c "import quart; print('✅ quart installed')" || echo "❌ quart failed"
-python -c "import uvicorn; print('✅ uvicorn installed')" || echo "❌ uvicorn failed"
-python -c "import azure.identity; print('✅ azure-identity installed')" || echo "❌ azure-identity failed"
-python -c "import openai; print('✅ openai installed')" || echo "❌ openai failed"
-
-echo ""
-echo "✅ Build completed successfully!"
-EOF
-    chmod +x build.sh
+    echo "✅ Quick validation completed - letting Oryx handle the build"
 
     # Create a robust startup script as backup
     cat > start_app.py << 'EOF'
@@ -402,8 +363,6 @@ EOF
             ENABLE_ORYX_BUILD="true" \
             ORYX_ENV_TYPE="python" \
             ORYX_PYTHON_VERSION="3.11" \
-            PRE_BUILD_COMMAND="chmod +x build.sh && ./build.sh" \
-            PRE_BUILD_SCRIPT_PATH="build.sh" \
             POST_BUILD_SCRIPT_PATH="" \
             DISABLE_COLLECTSTATIC="true" \
             WEBSITE_RUN_FROM_PACKAGE="0" \
@@ -881,6 +840,7 @@ az webapp config appsettings set \
         AZURE_OPENAI_SERVICE="$OPENAI_SERVICE" \
         AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
         AZURE_OPENAI_API_KEY="$OPENAI_KEY" \
+        AZURE_OPENAI_CHATGPT_MODEL="gpt-4o-mini" \
         AZURE_OPENAI_CHATGPT_DEPLOYMENT="$GPT_DEPLOYMENT" \
         AZURE_OPENAI_EMB_DEPLOYMENT="$EMBEDDING_DEPLOYMENT" \
         OPENAI_HOST="azure" \
