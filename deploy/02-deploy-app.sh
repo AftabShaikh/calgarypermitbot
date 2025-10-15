@@ -434,12 +434,12 @@ const port = process.env.PORT || 8080;
 
 // Serve static files with proper MIME types
 app.use(express.static(path.join(__dirname), {
-  setHeaders: (res, path) => {
-    if (path.endsWith('.js')) {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js')) {
       res.setHeader('Content-Type', 'application/javascript');
-    } else if (path.endsWith('.css')) {
+    } else if (filePath.endsWith('.css')) {
       res.setHeader('Content-Type', 'text/css');
-    } else if (path.endsWith('.html')) {
+    } else if (filePath.endsWith('.html')) {
       res.setHeader('Content-Type', 'text/html');
     }
   }
@@ -447,16 +447,26 @@ app.use(express.static(path.join(__dirname), {
 
 // Handle SPA routing - serve index.html for non-asset routes
 app.get('*', (req, res) => {
-  // Don't intercept asset requests
-  if (req.path.includes('.js') || req.path.includes('.css') || req.path.includes('.map') || req.path.includes('/assets/')) {
-    res.status(404).send('Not found');
+  // Don't intercept asset requests - let express.static handle them first
+  if (req.path.startsWith('/assets/') || 
+      req.path.endsWith('.js') || 
+      req.path.endsWith('.css') || 
+      req.path.endsWith('.map') ||
+      req.path.endsWith('.ico') ||
+      req.path.endsWith('.png') ||
+      req.path.endsWith('.jpg') ||
+      req.path.endsWith('.svg')) {
+    // If we reach here, the file doesn't exist, so return 404
+    res.status(404).send('File not found');
     return;
   }
+  // For all other routes (SPA routes), serve index.html
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(port, () => {
   console.log(`Frontend server running on port ${port}`);
+  console.log(`Serving static files from: ${__dirname}`);
 });
 EOF
 
