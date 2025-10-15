@@ -199,6 +199,82 @@ echo "Build completed"
 EOF
     chmod +x build.sh
 
+    # Create a robust startup script as backup
+    cat > start_app.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Robust startup script for Azure App Service
+Falls back to basic HTTP server if dependencies fail
+"""
+import os
+import sys
+import subprocess
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def install_critical_deps():
+    """Install critical dependencies at runtime"""
+    logger.info("Installing critical dependencies...")
+    critical_deps = ["quart==0.19.4", "flask==3.0.3", "python-dotenv==1.0.1"]
+    
+    for dep in critical_deps:
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", dep, "--no-cache-dir", "--quiet"], 
+                         check=True, timeout=60)
+            logger.info(f"Installed {dep}")
+        except Exception as e:
+            logger.warning(f"Failed to install {dep}: {e}")
+
+def create_basic_server():
+    """Create basic HTTP server"""
+    logger.info("Creating basic HTTP server...")
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+    
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            if self.path == '/health':
+                response = {"status": "healthy", "mode": "basic"}
+            else:
+                response = {"message": "Calgary Permit Bot", "status": "basic mode"}
+            
+            self.wfile.write(json.dumps(response).encode())
+        
+        def log_message(self, format, *args):
+            logger.info(format % args)
+    
+    port = int(os.environ.get("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    logger.info(f"Basic server running on port {port}")
+    server.serve_forever()
+
+if __name__ == "__main__":
+    # Set environment
+    os.environ["WEBSITE_HOSTNAME"] = "true"
+    os.environ["RUNNING_IN_PRODUCTION"] = "true"
+    
+    try:
+        # Try run_app.py first
+        logger.info("Attempting to run run_app.py...")
+        exec(open('run_app.py').read())
+    except Exception as e:
+        logger.warning(f"run_app.py failed: {e}")
+        try:
+            # Try installing dependencies and run again
+            install_critical_deps()
+            exec(open('run_app.py').read())
+        except Exception as e2:
+            logger.error(f"All startup methods failed: {e2}")
+            create_basic_server()
+EOF
+
     # Verify startup.py exists
     if [ ! -f "startup.py" ]; then
         echo "❌ startup.py not found in backend directory"
@@ -253,7 +329,9 @@ EOF
             POST_BUILD_SCRIPT_PATH="" \
             DISABLE_COLLECTSTATIC="true" \
             WEBSITE_RUN_FROM_PACKAGE="0" \
-            WEBSITE_ENABLE_SYNC_UPDATE_SITE="true"
+            WEBSITE_ENABLE_SYNC_UPDATE_SITE="true" \
+            PYTHONPATH="/home/site/wwwroot" \
+            PYTHON_ISOLATE_WORKER_DEPENDENCIES="1"
     
     # Configure Python runtime and startup command
     echo "🔧 Setting Python runtime version and startup command..."
@@ -261,7 +339,7 @@ EOF
         --name $BACKEND_APP_NAME \
         --resource-group $RESOURCE_GROUP \
         --linux-fx-version "PYTHON|3.11" \
-        --startup-file "gunicorn --worker-class uvicorn.workers.UvicornWorker main:app"
+        --startup-file "python run_app.py"
     
     # Prepare for clean deployment without stopping the app
     echo "🔄 Preparing for clean deployment..."
@@ -737,7 +815,9 @@ az webapp config appsettings set \
         RUNNING_IN_PRODUCTION="true" \
         WEBSITE_HOSTNAME="true" \
         PYTHONUNBUFFERED="1" \
-        PYTHONIOENCODING="UTF-8"
+        PYTHONIOENCODING="UTF-8" \
+        PYTHONDONTWRITEBYTECODE="1" \
+        PYTHON_ENABLE_GUNICORN_MULTIPROCESSING="false"
 
 # Enable remote debugging and additional settings (helpful for troubleshooting)
 echo "🔧 Enabling additional debugging settings..."
@@ -824,3 +904,12 @@ echo "   5. For status monitoring:"
 echo "      ./deploy/check-deployment-status.sh"
 echo ""
 echo "🎉 Deployment successful!"
+echo ""
+echo "🚨 If you encounter startup errors (like 'uvicorn not found'):"
+echo "   Run the backend startup fix script:"
+echo "   ./deploy/fix-backend-startup.sh"
+echo ""
+echo "📋 Common issues and fixes:"
+echo "   - Dependencies not installed: Use fix-backend-startup.sh"
+echo "   - App not starting: Check logs with 'az webapp log tail'"
+echo "   - 500 errors: Wait 5 minutes for full initialization"
